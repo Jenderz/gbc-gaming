@@ -1,0 +1,44 @@
+
+=== File: c:\Users\User\Downloads\WDLYBE\Maxplay.xlsx ===
+Headers:
+[ 'Maxplay', null ]
+
+First 2 Content Rows:
+[ [ 'Grupos', 'Venta' ], [ 'ALEXYS LOPEZ', '4.810,00' ] ]
+
+=== File: c:\Users\User\Downloads\WDLYBE\cuadre_de_caja.csv ===
+Headers:
+[ 'REPORTE:', 'CUADRE DE CAJA (USUARIO)', null, null ]
+
+First 2 Content Rows:
+[
+  [ 'FECHA:', '5/2/2026 - 5/2/2026', null, null ],
+  [ null, null, null, null ]
+]
+
+=== File: c:\Users\User\Downloads\WDLYBE\reporte-ventas.xlsx ===
+Headers:
+[
+  'www.betm3.com\n' +
+    'General GREEN CLOVER(A7737)  Reporte General de Ventas de Consolidado\n' +
+    '05/02/2026 - 05/02/2026\n' +
+    'Bolivar - VES',
+  null,
+  null,
+  null,
+  null,
+  null
+]
+
+First 2 Content Rows:
+[
+  [
+    'Nombre',
+    'Venta',
+    'Comision',
+    'Premio',
+    'Participacion',
+    'Utilidad'
+  ],
+  [ 'ALBERT VALECILLOS', 30248, 0, 13740, 0, 16508 ]
+]

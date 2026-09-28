@@ -1,0 +1,6 @@
+{
+    "appId": "com.gbcgaming.app",
+    "appName": "GBC GAMING",
+    "webDir": "dist",
+    "bundledWebRuntime": false
+}

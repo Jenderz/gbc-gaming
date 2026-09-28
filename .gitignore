@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+build/
+*.local
+*.csv
+Report-*.xls
+PARLEY.xlsx
+*_out.txt
+*_err.txt
+

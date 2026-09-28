@@ -1,0 +1,29 @@
+{
+    "name": "GBC GAMING",
+    "short_name": "GBC GAMING",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#060F0A",
+    "theme_color": "#00361F",
+    "orientation": "portrait-primary",
+    "icons": [
+        {
+            "src": "/icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "/icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "/logo.png",
+            "sizes": "1280x1280",
+            "type": "image/png",
+            "purpose": "any"
+        }
+    ]
+}

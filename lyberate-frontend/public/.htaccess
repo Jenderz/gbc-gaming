@@ -1,0 +1,31 @@
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+  
+  # 1. IMPORTANTE: Excluir la carpeta /api (o backend) de las reglas de React
+  # Si el backend de PHP vive en la misma raíz bajo /api, el servidor no debe redirigir esa petición al frontend.
+  RewriteRule ^api/ - [L]
+
+  # 2. Manejo del History API en React (Rutas del Frontend)
+  # Si el archivo pedido no es un archivo real (-f) ni una carpeta (-d)...
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  
+  # ...redirige la ruta a index.html para que React Router decida qué mostrar.
+  RewriteRule ^ index.html [QSA,L]
+</IfModule>
+
+# 3. Compresión GZIP (Acelera la carga de Vite)
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json
+</IfModule>
+
+# 4. Caché de Estáticos (Opcional, pero muy recomendado)
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType image/webp "access plus 1 month"
+  ExpiresByType image/png "access plus 1 month"
+  ExpiresByType image/jpeg "access plus 1 month"
+  ExpiresByType text/css "access plus 1 week"
+  ExpiresByType application/javascript "access plus 1 week"
+</IfModule>

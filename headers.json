@@ -1,0 +1,19 @@
+{
+  "headerIndex": 1,
+  "header": [
+    "Nombre",
+    "Venta",
+    "Comision",
+    "Premio",
+    "Participacion",
+    "Utilidad"
+  ],
+  "sampleRow": [
+    "ALBERT VALECILLOS",
+    30248,
+    0,
+    13740,
+    0,
+    16508
+  ]
+}

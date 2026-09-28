@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-main: 'Inter', sans-serif;
+  --gbc-green: #00361F;
+  --gbc-gold: #EBBB03;
+}
+
+body {
+  background-color: #F8FAF9;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+  -webkit-user-select: none; 
+  user-select: none;
+}
+
+.dark body {
+  background-color: #060F0A; /* GBC Gaming Deep Obsidian Emerald */
+}
+
+input, textarea, .prose {
+    -webkit-user-select: text;
+    user-select: text;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.glass-panel {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(0, 54, 31, 0.08);
+}
+
+.dark .glass-panel {
+  background: rgba(12, 28, 19, 0.75);
+  border: 1px solid rgba(235, 187, 3, 0.12);
+}
+
+.gbc-gold-gradient {
+  background: linear-gradient(135deg, #EBBB03 0%, #F59E0B 100%);
+}
+
+.gbc-green-gradient {
+  background: linear-gradient(135deg, #00361F 0%, #004D2C 100%);
+}
+
+/* Animations */
+.animate-fade-in { animation: fadeIn 0.3s ease-out; }
+.animate-slide-in-right { animation: slideInRight 0.3s ease-out; }
+.animate-slide-up { animation: slideUp 0.8s cubic-bezier(0.16, 1, 0.3, 1); }
+.animate-pulse-slow { animation: pulseSlow 10s infinite alternate; }
+
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes slideUp { from { transform: translateY(50px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes pulseSlow { from { transform: scale(1.0); } to { transform: scale(1.1); } }
+
+.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+.pt-safe { padding-top: env(safe-area-inset-top); }
+.pl-safe { padding-left: env(safe-area-inset-left); }
+.pr-safe { padding-right: env(safe-area-inset-right); }
