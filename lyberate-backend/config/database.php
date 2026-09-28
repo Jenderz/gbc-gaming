@@ -4,13 +4,13 @@
  */
 
 define('DB_HOST', getenv('DB_HOST') ?: 'localhost');
-define('DB_NAME', getenv('DB_NAME') ?: 'qluilsmq_wd');
+define('DB_NAME', getenv('DB_NAME') ?: 'qluilsmq_gbc');
 define('DB_USER', getenv('DB_USER') ?: 'qluilsmq_jen');
 define('DB_PASS', getenv('DB_PASS') !== false ? getenv('DB_PASS') : 'Ai648.va');
 define('DB_CHARSET', 'utf8mb4');
 
 // JWT Secret Key - Carga desde variable de entorno o usa fallback en desarrollo
-define('JWT_SECRET', getenv('JWT_SECRET') ?: 'lyberate_jwt_secret_key_change_in_production_2026');
+define('JWT_SECRET', getenv('JWT_SECRET') ?: 'gbc_gaming_jwt_secret_key_production_2026');
 define('JWT_EXPIRY', 28800); // 8 hours in seconds
 
 // Upload config
