@@ -3,7 +3,7 @@
 // All functions are async and match the signatures used by components.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const API_BASE = (import.meta as any).env?.VITE_API_URL || 'https://panel.gbc-gaming.com/api';
+const API_BASE = (import.meta as any).env?.VITE_API_URL || 'https://mi.gbc-gaming.com/api';
 
 // ─── Types (re-exported from same definitions) ───────────────────────────────
 

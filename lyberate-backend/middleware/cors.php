@@ -5,6 +5,8 @@
 function handleCors() {
     // Allow from GBC Gaming domains and local development
     $allowedOrigins = [
+        'https://mi.gbc-gaming.com',
+        'http://mi.gbc-gaming.com',
         'https://panel.gbc-gaming.com',
         'http://panel.gbc-gaming.com',
         'https://gbc-gaming.com',

@@ -8,4 +8,7 @@ Report-*.xls
 PARLEY.xlsx
 *_out.txt
 *_err.txt
-
+*.zip
+*.txt
+!lyberate-frontend/typescript-errors.txt
+!temp-etl/*.txt
