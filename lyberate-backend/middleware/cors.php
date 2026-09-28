@@ -3,16 +3,20 @@
  * CORS Middleware
  */
 function handleCors() {
-    // Allow from the frontend domain
+    // Allow from GBC Gaming domains and local development
     $allowedOrigins = [
-        'https://mi.worlddeportes.com',
+        'https://panel.gbc-gaming.com',
+        'http://panel.gbc-gaming.com',
+        'https://gbc-gaming.com',
+        'https://www.gbc-gaming.com',
         'http://localhost:5173',
         'http://localhost:3000',
+        'https://mi.worlddeportes.com',
     ];
 
     $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 
-    if (in_array($origin, $allowedOrigins)) {
+    if (in_array($origin, $allowedOrigins) || preg_match('/^https?:\/\/(.*?\.)?gbc-gaming\.com$/i', $origin)) {
         header("Access-Control-Allow-Origin: $origin");
     }
 
