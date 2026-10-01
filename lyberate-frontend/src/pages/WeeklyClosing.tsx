@@ -2,7 +2,8 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { renderElementToDataUrl } from '../utils/ticketRenderer';
 import {
     CalendarCheck, ChevronDown, ChevronUp, Receipt,
-    CheckCircle2, Clock, AlertCircle, Building2, Package, X, Download, Share2
+    CheckCircle2, Clock, AlertCircle, Building2, Package, X, Download, Share2,
+    Search
 } from 'lucide-react';
 import {
     getSales, getPayments, getSellers, getWeeklyPeriods,
@@ -49,6 +50,10 @@ type SellerRow = {
 // ─── Formateador ──────────────────────────────────────────────────────────────
 const fmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// ─── Normalizador para búsqueda insensible a mayúsculas y acentos ─────────────
+const normalizeText = (text: string) =>
+    (text || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export const WeeklyClosing = () => {
     const [allSalesData, setAllSalesData] = useState<any[]>([]);
@@ -58,6 +63,7 @@ export const WeeklyClosing = () => {
     const [expanded, setExpanded] = useState<string | null>(null);
     const [generatingFor, setGeneratingFor] = useState<string | null>(null);
     const [toast, setToast] = useState<string | null>(null);
+    const [searchTerm, setSearchTerm] = useState('');
 
     // Receptor de impresión HTML2Canvas
     const [printingRow, setPrintingRow] = useState<SellerRow | null>(null);
@@ -168,6 +174,27 @@ export const WeeklyClosing = () => {
 
         return { rows: Array.from(map.values()), period: selectedPeriod };
     }, [selectedPeriodId, sellers, allSalesData, allPaymentsData]);
+
+    // ── Filtrado de vendedores por buscador ────────────────────────────────────
+    const filteredRows = useMemo(() => {
+        if (!searchTerm.trim()) return report.rows;
+        const term = normalizeText(searchTerm);
+        return report.rows.filter(row => {
+            const matchName = normalizeText(row.sellerName).includes(term);
+            const matchCurrency = normalizeText(row.currency).includes(term);
+            const matchProduct = row.productBreakdown?.some(p => normalizeText(p.productName).includes(term));
+            const matchAgency = row.agencyBreakdown?.some(a => normalizeText(a.agencyName).includes(term));
+            return matchName || matchCurrency || matchProduct || matchAgency;
+        });
+    }, [report.rows, searchTerm]);
+
+    // ── Filtrado de tickets generados por buscador ─────────────────────────────
+    const filteredTickets = useMemo(() => {
+        const periodTickets = tickets.filter(t => t.weekId === selectedPeriodId && t.status !== 'open');
+        if (!searchTerm.trim()) return periodTickets;
+        const term = normalizeText(searchTerm);
+        return periodTickets.filter(t => normalizeText(t.sellerName).includes(term) || normalizeText(t.currency).includes(term));
+    }, [tickets, selectedPeriodId, searchTerm]);
 
     // ── Previsualizar ticket (sin guardar) ────────────────────────────────────
     const handlePreviewTicket = (row: SellerRow) => {
@@ -326,143 +353,204 @@ export const WeeklyClosing = () => {
                         <p className="text-xs mt-1">Ve al módulo de Ventas para registrar movimientos.</p>
                     </div>
                 ) : (
-                    <div className="space-y-3">
-                        {report.rows.map(row => {
-                            const existingTicket = getExistingTicket(row.sellerId, row.currency);
-                            const rowKey = row.sellerId + row.currency;
-                            const isExpanded = expanded === rowKey;
-                            const isGenerating = generatingFor === rowKey;
-
-                            return (
-                                <div key={rowKey} className="rounded-2xl border border-black/5 dark:border-white/5 overflow-hidden">
-                                    {/* Fila principal */}
-                                    <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 bg-white/50 dark:bg-white/[0.03]">
-                                        <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-2 flex-wrap">
-                                                <p className="font-bold text-sm">{row.sellerName}</p>
-                                                <span className="text-xs bg-black/5 dark:bg-white/5 px-2 py-0.5 rounded-lg font-mono">{row.currency}</span>
-                                                {existingTicket && <StatusBadge status={existingTicket.status} />}
-                                            </div>
-                                            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5 text-xs text-ios-subtext">
-                                                <span>Venta: <strong className="text-ios-text">{getSymbol(row.currency)}{fmt(row.totalSales)}</strong></span>
-                                                <span>Banco: <strong className="text-ios-green">{getSymbol(row.currency)}{fmt(row.totalBank)}</strong></span>
-                                                <span>Pagado: <strong className="text-ios-blue">{getSymbol(row.currency)}{fmt(row.totalPaid)}</strong></span>
-                                                <span className={`font-bold ${row.balance > 0 ? 'text-red-500' : 'text-ios-green'}`}>
-                                                    Balance: {row.balance > 0 ? `Debe ${getSymbol(row.currency)}${fmt(row.balance)}` : `A favor ${getSymbol(row.currency)}${fmt(Math.abs(row.balance))}`}
-                                                </span>
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center gap-2 flex-shrink-0">
-                                            {/* Desglose por items (si hay) */}
-                                            {(row.agencyBreakdown.length > 0 || row.productBreakdown.length > 0) && (
-                                                <button
-                                                    onClick={() => setExpanded(isExpanded ? null : rowKey)}
-                                                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all ${isExpanded ? 'bg-ios-blue text-white shadow-sm' : 'text-ios-subtext bg-black/5 dark:bg-white/5 hover:bg-black/10'}`}
-                                                >
-                                                    <Package size={13} />
-                                                    Desglose ({row.productBreakdown.length} Prod)
-                                                    {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                                                </button>
-                                            )}
-                                            {/* Acción de generar/actualizar ticket */}
-                                            <button
-                                                onClick={() => handleGenerateTicket(row)}
-                                                disabled={isGenerating}
-                                                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all ${existingTicket ? 'bg-black/5 dark:bg-white/5 text-ios-subtext hover:bg-black/10' : 'bg-ios-blue text-white hover:bg-blue-600 shadow-sm'} disabled:opacity-50`}
-                                            >
-                                                {isGenerating ? (
-                                                    <span className="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
-                                                ) : (
-                                                    <CalendarCheck size={13} />
-                                                )}
-                                                {existingTicket ? 'Actualizar Snapshot' : 'Guardar Snapshot'}
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    {/* Desglose de agencias y productos (expandible) */}
-                                    {isExpanded && (row.agencyBreakdown.length > 0 || row.productBreakdown.length > 0) && (
-                                        <div className="border-t border-black/5 dark:border-white/5 px-4 py-3 bg-black/[0.02] dark:bg-white/[0.02] animate-fade-in space-y-4">
-
-                                            {/* Productos */}
-                                            {row.productBreakdown.length > 0 && (
-                                                <div>
-                                                    <p className="text-xs font-bold text-ios-subtext uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                                                        <Package size={12} /> Desglose por Producto
-                                                    </p>
-                                                    <div className="space-y-1.5">
-                                                        {row.productBreakdown.map(prod => (
-                                                            <div key={prod.productName} className="flex flex-col sm:flex-row sm:items-center justify-between text-xs px-3 py-2 bg-white/60 dark:bg-white/5 rounded-xl border border-black/5 dark:border-white/5">
-                                                                <span className="font-semibold text-ios-text flex items-center gap-2 mb-1 sm:mb-0">
-                                                                    <span className="w-1.5 h-1.5 rounded-full bg-ios-blue"></span> {prod.productName}
-                                                                    <span className="text-[10px] text-ios-subtext font-normal px-1.5 py-0.5 bg-black/5 dark:bg-white/5 rounded-md">{prod.count} reg.</span>
-                                                                </span>
-                                                                <div className="flex gap-4 text-ios-subtext">
-                                                                    <span>Venta: <strong className="text-ios-text">{getSymbol(row.currency)}{fmt(prod.amount)}</strong></span>
-                                                                    <span>Banca: <strong className="text-ios-green">{getSymbol(row.currency)}{fmt(prod.totalBank)}</strong></span>
-                                                                </div>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {/* Agencias */}
-                                            {row.agencyBreakdown.length > 0 && (
-                                                <div>
-                                                    <p className="text-xs font-bold text-ios-subtext uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                                                        <Building2 size={12} /> Desglose por Agencia
-                                                    </p>
-                                                    <div className="space-y-1.5">
-                                                        {row.agencyBreakdown.map(ag => (
-                                                            <div key={ag.agencyName} className="flex flex-col sm:flex-row sm:items-center justify-between text-xs px-3 py-2 bg-white/60 dark:bg-white/5 rounded-xl border border-black/5 dark:border-white/5">
-                                                                <span className="flex items-center gap-1.5 font-semibold">
-                                                                    <span className="w-1.5 h-1.5 rounded-full bg-orange-500"></span> {ag.agencyName}
-                                                                </span>
-                                                                <div className="flex gap-4 text-ios-subtext">
-                                                                    <span>Venta: <strong className="text-ios-text">{getSymbol(row.currency)}{fmt(ag.amount)}</strong></span>
-                                                                    <span>Banca: <strong className="text-ios-green">{getSymbol(row.currency)}{fmt(ag.totalBank)}</strong></span>
-                                                                </div>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
+                    <>
+                        {/* Barra superior con buscador y contador */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold uppercase tracking-wider text-ios-subtext">
+                                    {searchTerm.trim() ? (
+                                        <>
+                                            Resultados: <span className="text-ios-text font-black">{filteredRows.length}</span> de {report.rows.length} {report.rows.length === 1 ? 'vendedor' : 'vendedores'}
+                                        </>
+                                    ) : (
+                                        <>
+                                            Vendedores ({report.rows.length})
+                                        </>
                                     )}
+                                </span>
+                            </div>
 
-                                    {/* Desglose completo de liquidación */}
-                                    <div className="border-t border-black/5 dark:border-white/5 px-4 py-3 grid grid-cols-4 sm:grid-cols-7 gap-2 text-xs text-center">
-                                        {[
-                                            { label: 'Venta', value: row.totalSales, color: '' },
-                                            { label: 'Premio', value: row.totalPrize, color: 'text-red-500' },
-                                            { label: 'Comisión', value: row.totalCommission, color: 'text-red-500' },
-                                            { label: 'Total Neto', value: row.totalNet, color: 'font-bold' },
-                                            { label: 'Part.', value: row.totalParticipation, color: 'text-orange-500' },
-                                            { label: 'Total Vendedor', value: row.totalVendor, color: 'text-ios-blue font-bold' },
-                                            { label: 'Total Banca', value: row.totalBank, color: 'text-ios-green font-bold' },
-                                        ].map(({ label, value, color }) => (
-                                            <div key={label} className="flex flex-col gap-0.5">
-                                                <span className="text-ios-subtext text-[10px] font-bold uppercase">{label}</span>
-                                                <span className={`font-semibold ${color}`}>{getSymbol(row.currency)}{fmt(value)}</span>
+                            {/* Buscador de vendedores */}
+                            <div className="relative w-full sm:w-72 md:w-80">
+                                <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ios-subtext pointer-events-none" />
+                                <input
+                                    type="text"
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Escape') setSearchTerm('');
+                                    }}
+                                    placeholder="Buscar vendedor o moneda..."
+                                    className="w-full pl-9 pr-9 py-2 text-sm rounded-xl bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10 focus:ring-2 focus:ring-ios-blue/50 focus:bg-white dark:focus:bg-[#1c1c1e] outline-none transition-all placeholder:text-ios-subtext/60"
+                                />
+                                {searchTerm && (
+                                    <button
+                                        onClick={() => setSearchTerm('')}
+                                        className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-ios-subtext hover:text-ios-text rounded-full hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                                        title="Limpiar búsqueda"
+                                    >
+                                        <X size={14} />
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {filteredRows.length === 0 ? (
+                            <div className="py-12 text-center text-ios-subtext bg-black/[0.02] dark:bg-white/[0.02] rounded-2xl border border-dashed border-black/10 dark:border-white/10">
+                                <Search size={28} className="mx-auto mb-2 opacity-30 text-ios-subtext" />
+                                <p className="font-semibold text-sm">No se encontraron vendedores que coincidan con "{searchTerm}"</p>
+                                <button
+                                    onClick={() => setSearchTerm('')}
+                                    className="mt-3 text-xs font-bold text-ios-blue hover:underline cursor-pointer"
+                                >
+                                    Limpiar búsqueda
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="space-y-3">
+                                {filteredRows.map(row => {
+                                    const existingTicket = getExistingTicket(row.sellerId, row.currency);
+                                    const rowKey = row.sellerId + row.currency;
+                                    const isExpanded = expanded === rowKey;
+                                    const isGenerating = generatingFor === rowKey;
+
+                                    return (
+                                        <div key={rowKey} className="rounded-2xl border border-black/5 dark:border-white/5 overflow-hidden">
+                                            {/* Fila principal */}
+                                            <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 bg-white/50 dark:bg-white/[0.03]">
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        <p className="font-bold text-sm">{row.sellerName}</p>
+                                                        <span className="text-xs bg-black/5 dark:bg-white/5 px-2 py-0.5 rounded-lg font-mono">{row.currency}</span>
+                                                        {existingTicket && <StatusBadge status={existingTicket.status} />}
+                                                    </div>
+                                                    <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5 text-xs text-ios-subtext">
+                                                        <span>Venta: <strong className="text-ios-text">{getSymbol(row.currency)}{fmt(row.totalSales)}</strong></span>
+                                                        <span>Banco: <strong className="text-ios-green">{getSymbol(row.currency)}{fmt(row.totalBank)}</strong></span>
+                                                        <span>Pagado: <strong className="text-ios-blue">{getSymbol(row.currency)}{fmt(row.totalPaid)}</strong></span>
+                                                        <span className={`font-bold ${row.balance > 0 ? 'text-red-500' : 'text-ios-green'}`}>
+                                                            Balance: {row.balance > 0 ? `Debe ${getSymbol(row.currency)}${fmt(row.balance)}` : `A favor ${getSymbol(row.currency)}${fmt(Math.abs(row.balance))}`}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-2 flex-shrink-0">
+                                                    {/* Desglose por items (si hay) */}
+                                                    {(row.agencyBreakdown.length > 0 || row.productBreakdown.length > 0) && (
+                                                        <button
+                                                            onClick={() => setExpanded(isExpanded ? null : rowKey)}
+                                                            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all ${isExpanded ? 'bg-ios-blue text-white shadow-sm' : 'text-ios-subtext bg-black/5 dark:bg-white/5 hover:bg-black/10'}`}
+                                                        >
+                                                            <Package size={13} />
+                                                            Desglose ({row.productBreakdown.length} Prod)
+                                                            {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                                                        </button>
+                                                    )}
+                                                    {/* Acción de generar/actualizar ticket */}
+                                                    <button
+                                                        onClick={() => handleGenerateTicket(row)}
+                                                        disabled={isGenerating}
+                                                        className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all ${existingTicket ? 'bg-black/5 dark:bg-white/5 text-ios-subtext hover:bg-black/10' : 'bg-ios-blue text-white hover:bg-blue-600 shadow-sm'} disabled:opacity-50`}
+                                                    >
+                                                        {isGenerating ? (
+                                                            <span className="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                                                        ) : (
+                                                            <CalendarCheck size={13} />
+                                                        )}
+                                                        {existingTicket ? 'Actualizar Snapshot' : 'Guardar Snapshot'}
+                                                    </button>
+                                                </div>
                                             </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
+
+                                            {/* Desglose de agencias y productos (expandible) */}
+                                            {isExpanded && (row.agencyBreakdown.length > 0 || row.productBreakdown.length > 0) && (
+                                                <div className="border-t border-black/5 dark:border-white/5 px-4 py-3 bg-black/[0.02] dark:bg-white/[0.02] animate-fade-in space-y-4">
+
+                                                    {/* Productos */}
+                                                    {row.productBreakdown.length > 0 && (
+                                                        <div>
+                                                            <p className="text-xs font-bold text-ios-subtext uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                                                                <Package size={12} /> Desglose por Producto
+                                                            </p>
+                                                            <div className="space-y-1.5">
+                                                                {row.productBreakdown.map(prod => (
+                                                                    <div key={prod.productName} className="flex flex-col sm:flex-row sm:items-center justify-between text-xs px-3 py-2 bg-white/60 dark:bg-white/5 rounded-xl border border-black/5 dark:border-white/5">
+                                                                        <span className="font-semibold text-ios-text flex items-center gap-2 mb-1 sm:mb-0">
+                                                                            <span className="w-1.5 h-1.5 rounded-full bg-ios-blue"></span> {prod.productName}
+                                                                            <span className="text-[10px] text-ios-subtext font-normal px-1.5 py-0.5 bg-black/5 dark:bg-white/5 rounded-md">{prod.count} reg.</span>
+                                                                        </span>
+                                                                        <div className="flex gap-4 text-ios-subtext">
+                                                                            <span>Venta: <strong className="text-ios-text">{getSymbol(row.currency)}{fmt(prod.amount)}</strong></span>
+                                                                            <span>Banca: <strong className="text-ios-green">{getSymbol(row.currency)}{fmt(prod.totalBank)}</strong></span>
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {/* Agencias */}
+                                                    {row.agencyBreakdown.length > 0 && (
+                                                        <div>
+                                                            <p className="text-xs font-bold text-ios-subtext uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                                                                <Building2 size={12} /> Desglose por Agencia
+                                                            </p>
+                                                            <div className="space-y-1.5">
+                                                                {row.agencyBreakdown.map(ag => (
+                                                                    <div key={ag.agencyName} className="flex flex-col sm:flex-row sm:items-center justify-between text-xs px-3 py-2 bg-white/60 dark:bg-white/5 rounded-xl border border-black/5 dark:border-white/5">
+                                                                        <span className="flex items-center gap-1.5 font-semibold">
+                                                                            <span className="w-1.5 h-1.5 rounded-full bg-orange-500"></span> {ag.agencyName}
+                                                                        </span>
+                                                                        <div className="flex gap-4 text-ios-subtext">
+                                                                            <span>Venta: <strong className="text-ios-text">{getSymbol(row.currency)}{fmt(ag.amount)}</strong></span>
+                                                                            <span>Banca: <strong className="text-ios-green">{getSymbol(row.currency)}{fmt(ag.totalBank)}</strong></span>
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+
+                                            {/* Desglose completo de liquidación */}
+                                            <div className="border-t border-black/5 dark:border-white/5 px-4 py-3 grid grid-cols-4 sm:grid-cols-7 gap-2 text-xs text-center">
+                                                {[
+                                                    { label: 'Venta', value: row.totalSales, color: '' },
+                                                    { label: 'Premio', value: row.totalPrize, color: 'text-red-500' },
+                                                    { label: 'Comisión', value: row.totalCommission, color: 'text-red-500' },
+                                                    { label: 'Total Neto', value: row.totalNet, color: 'font-bold' },
+                                                    { label: 'Part.', value: row.totalParticipation, color: 'text-orange-500' },
+                                                    { label: 'Total Vendedor', value: row.totalVendor, color: 'text-ios-blue font-bold' },
+                                                    { label: 'Total Banca', value: row.totalBank, color: 'text-ios-green font-bold' },
+                                                ].map(({ label, value, color }) => (
+                                                    <div key={label} className="flex flex-col gap-0.5">
+                                                        <span className="text-ios-subtext text-[10px] font-bold uppercase">{label}</span>
+                                                        <span className={`font-semibold ${color}`}>{getSymbol(row.currency)}{fmt(value)}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </>
                 )}
             </div>
 
             {/* Panel de Tickets Generados */}
-            {tickets.filter(t => t.weekId === selectedPeriodId && t.status !== 'open').length > 0 && (
+            {filteredTickets.length > 0 && (
                 <div className="glass-panel p-6 rounded-3xl">
                     <h2 className="text-base font-bold mb-4 flex items-center gap-2">
                         <Receipt size={18} className="text-ios-blue" /> Tickets Generados Esta Semana
+                        {searchTerm.trim() && (
+                            <span className="text-xs font-normal text-ios-subtext ml-1">
+                                ({filteredTickets.length})
+                            </span>
+                        )}
                     </h2>
                     <div className="space-y-2">
-                        {tickets.filter(t => t.weekId === selectedPeriodId && t.status !== 'open').map(ticket => (
+                        {filteredTickets.map(ticket => (
                             <div key={ticket.id} className="flex items-center justify-between p-3 rounded-xl bg-black/5 dark:bg-white/5 text-sm">
                                 <div>
                                     <span className="font-bold">{ticket.sellerName}</span>

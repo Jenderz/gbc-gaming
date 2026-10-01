@@ -11,7 +11,9 @@ import {
     X,
     Percent,
     Trash2,
-    Building2
+    Building2,
+    Users,
+    UserCheck
 } from 'lucide-react';
 import {
     getGlobalProducts,
@@ -31,6 +33,7 @@ import { roundFinance } from '../utils/finance';
 interface RawRow {
     vendorName: string;
     agencyName?: string;
+    productName?: string; // Sub-producto individual (ej. "PARLEY 4+", "PARLEY 3L", "PARLEY 2L", "PARLEY PD")
     sales: number;
     prizes: number;
     sourceRow: any;
@@ -81,12 +84,80 @@ export const SalesImportModal: React.FC<SalesImportModalProps> = ({ onClose, onI
     const [bulkCommission, setBulkCommission] = useState<number>(0);
     const [bulkParticipation, setBulkParticipation] = useState<number>(0);
 
+    // Estado para agrupación manual de vendedores en el importador
+    const [selectedRowIndices, setSelectedRowIndices] = useState<number[]>([]);
+    const [bulkTargetSeller, setBulkTargetSeller] = useState<string>('');
+    const [bulkSaveAlias, setBulkSaveAlias] = useState<boolean>(true);
+    const [isGroupingModalOpen, setIsGroupingModalOpen] = useState<boolean>(false);
+    const [groupingSourceAgent, setGroupingSourceAgent] = useState<string>('');
+    const [groupingTargetSeller, setGroupingTargetSeller] = useState<string>('');
+    const [groupingCustomTarget, setGroupingCustomTarget] = useState<string>('');
+    const [groupingSaveAlias, setGroupingSaveAlias] = useState<boolean>(true);
+
     const handleApplyBulkPercentages = (comm: number, part: number) => {
         setMissingVendors(prev => prev.map(v => ({
             ...v,
             commissionPct: comm,
             partPct: part
         })));
+    };
+
+    /**
+     * Aplica la agrupación manual de un conjunto de filas hacia un vendedor destino.
+     * Si saveAlias es true, registra la asignación permanente en sellerAliases.
+     */
+    const handleApplyManualGroup = async (targetSellerName: string, indicesToUpdate: number[], saveAlias: boolean = true) => {
+        if (!session || !targetSellerName.trim() || indicesToUpdate.length === 0) return;
+        const cleanTarget = targetSellerName.trim().toUpperCase();
+        const targetSellerObj = allSellers.find(s => s.name.trim().toUpperCase() === cleanTarget);
+
+        // Agentes originales que se están reasignando
+        const originalAgents = Array.from(new Set(
+            indicesToUpdate.map(idx => session.rows[idx]?.vendorName?.trim()?.toUpperCase()).filter(Boolean)
+        ));
+
+        // Actualizar filas en la sesión
+        const updatedRows = session.rows.map((row, idx) => {
+            if (indicesToUpdate.includes(idx)) {
+                return { ...row, vendorName: cleanTarget };
+            }
+            return row;
+        });
+
+        // Consolidar filas que ahora compartan vendedor, producto, agencia y moneda
+        const consolidatedMap = new Map<string, RawRow>();
+        for (const r of updatedRows) {
+            const prod = (r.productName || session.productName).trim().toUpperCase();
+            const curr = (r.sourceRow?._currency || session.currency).trim().toUpperCase();
+            const agency = (r.agencyName || '').trim().toUpperCase();
+            const vend = r.vendorName.trim().toUpperCase();
+            const key = `${vend}||${prod}||${agency}||${curr}`;
+            const existing = consolidatedMap.get(key);
+            if (existing) {
+                existing.sales += r.sales;
+                existing.prizes += r.prizes;
+            } else {
+                consolidatedMap.set(key, { ...r });
+            }
+        }
+        const newRows = Array.from(consolidatedMap.values());
+        setSession({ ...session, rows: newRows });
+        setSelectedRowIndices([]);
+        setBulkTargetSeller('');
+
+        // Si se eligió guardar alias permanente y el vendedor existe en BD
+        if (saveAlias && targetSellerObj) {
+            for (const orig of originalAgents) {
+                if (orig && orig !== cleanTarget) {
+                    try {
+                        await addSellerAlias(targetSellerObj.id, orig);
+                        setSellerAliases(prev => ({ ...prev, [orig]: Number(targetSellerObj.id) }));
+                    } catch (err) {
+                        console.warn(`No se pudo guardar alias para ${orig}:`, err);
+                    }
+                }
+            }
+        }
     };
 
     useEffect(() => {
@@ -213,7 +284,7 @@ export const SalesImportModal: React.FC<SalesImportModalProps> = ({ onClose, onI
      *   - Separación:
      *       El primer guión (-) encontrado separa la Agencia/Taquilla (antes) y el Grupo (después).
      */
-    const parseAmericanasName = (raw: string, defaultCurrency: string = 'DOLAR'): { currency: string; agencyName: string; grupo: string; operadora: string } | null => {
+    const parseAmericanasName = (raw: string, defaultCurrency: string = 'DOLAR'): { currency: string; agencyName: string; grupo: string; operadora: string; isGrande: boolean } | null => {
         if (!raw) return null;
         let s = String(raw).trim();
         if (!s) return null;
@@ -287,11 +358,19 @@ export const SalesImportModal: React.FC<SalesImportModalProps> = ({ onClose, onI
 
         if (!agencyName && !grupo) return null;
 
+        // Detección senior para 'GRANDE':
+        // Se considera vendedor individual si el grupo contiene 'GRANDE',
+        // si hubo una anotación '(GRANDE)', o si la palabra 'GRANDE' aparece en el registro.
+        const isGrande = /grande/i.test(grupo) ||
+            /grande/i.test(potentialParenGroup) ||
+            /\bgrande\b/i.test(raw);
+
         return {
             currency,
             agencyName: agencyName.toUpperCase() || grupo,
             grupo,
-            operadora
+            operadora,
+            isGrande
         };
     };
 
@@ -379,47 +458,89 @@ export const SalesImportModal: React.FC<SalesImportModalProps> = ({ onClose, onI
             }
 
             if (taqIdx !== -1) {
-                // Agrupar por vendedor+moneda (aquí cada agente es directo, no hay grupos)
+                // Verificar si es un archivo de Parley con desglose por producto/jugada ("Parley 4+", "Parley 3l", etc.)
+                const hasParleyBreakdown = isParley && data.slice(headerRowIndex + 1).some(r => {
+                    const raw = String(r?.[taqIdx] ?? '').trim();
+                    return /^parley\s+([^\s]+)\s+(usd|bs|cop)\s+/i.test(raw);
+                });
+
                 const consolidatedMG = new Map<string, RawRow>();
 
                 data.slice(headerRowIndex + 1).forEach((row: any[]) => {
                     const raw = String(row[taqIdx] ?? '').trim();
-                    if (!raw) return;
-                    // Ignorar filas de totales
-                    if (/^totales?/i.test(raw)) return;
+                    if (!raw || /^totales?/i.test(raw)) return;
 
-                    // Ignorar sub-filas de jugada de Parley ("Parley 4+ Usd...", etc.)
-                    if (/^parley\s+/i.test(raw)) return;
+                    if (hasParleyBreakdown) {
+                        // Desglose granular de PARLEY (Parley 4+, Parley 3l, Parley 2l, Parley PD)
+                        const match = raw.match(/^parley\s+([^\s]+)\s+(usd|bs|cop)\s+(.+)$/i);
+                        if (!match) return; // Omitir filas totalizadoras ("1DONLUCHO Usd") para no duplicar ventas
 
-                    const parsed = parseMastergreenName(raw);
-                    if (!parsed) return;
+                        const subProduct = 'PARLEY ' + match[1].toUpperCase();
+                        const currCode = match[2].toUpperCase();
+                        const currency = currCode === 'BS' ? 'BOLIVARES VENEZOLANOS'
+                                       : currCode === 'COP' ? 'PESO COLOMBIANA'
+                                       : 'DOLAR';
 
-                    const { vendorName, currency } = parsed;
+                        let vendorName = match[3].trim().toUpperCase();
+                        const rawKey = vendorName.trim().toUpperCase();
+                        if (sellerAliases[rawKey]) {
+                            const mappedSeller = allSellers.find(s => Number(s.id) === sellerAliases[rawKey]);
+                            if (mappedSeller) vendorName = mappedSeller.name.toUpperCase();
+                        }
 
-                    // Resolver alias si existe
-                    let finalName = vendorName;
-                    const rawKey = vendorName.trim().toUpperCase();
-                    if (sellerAliases[rawKey]) {
-                        const mappedSeller = allSellers.find(s => Number(s.id) === sellerAliases[rawKey]);
-                        if (mappedSeller) finalName = mappedSeller.name.toUpperCase();
-                    }
+                        const salesVal  = salesIdx  !== -1 ? parseAmount(row[salesIdx])  : 0;
+                        const prizesVal = prizesIdx !== -1 ? parseAmount(row[prizesIdx]) : 0;
+                        if (salesVal === 0 && prizesVal === 0) return;
 
-                    const salesVal  = salesIdx  !== -1 ? parseAmount(row[salesIdx])  : 0;
-                    const prizesVal = prizesIdx !== -1 ? parseAmount(row[prizesIdx]) : 0;
-                    if (salesVal === 0 && prizesVal === 0) return;
-
-                    const key = `${finalName}||${currency}`;
-                    const existing = consolidatedMG.get(key);
-                    if (existing) {
-                        existing.sales  += salesVal;
-                        existing.prizes += prizesVal;
+                        const key = `${vendorName}||${subProduct}||${currency}`;
+                        const existing = consolidatedMG.get(key);
+                        if (existing) {
+                            existing.sales  += salesVal;
+                            existing.prizes += prizesVal;
+                        } else {
+                            consolidatedMG.set(key, {
+                                vendorName,
+                                productName: subProduct,
+                                sales:  salesVal,
+                                prizes: prizesVal,
+                                sourceRow: { ...row, _currency: currency, _productName: subProduct }
+                            });
+                        }
                     } else {
-                        consolidatedMG.set(key, {
-                            vendorName: finalName,
-                            sales:  salesVal,
-                            prizes: prizesVal,
-                            sourceRow: { ...row, _currency: currency }
-                        });
+                        // Flujo estándar Mastergreen / Worlddeportes sin desglose
+                        if (/^parley\s+/i.test(raw)) return;
+
+                        const parsed = parseMastergreenName(raw);
+                        if (!parsed) return;
+
+                        const { vendorName, currency } = parsed;
+
+                        // Resolver alias si existe
+                        let finalName = vendorName;
+                        const rawKey = vendorName.trim().toUpperCase();
+                        if (sellerAliases[rawKey]) {
+                            const mappedSeller = allSellers.find(s => Number(s.id) === sellerAliases[rawKey]);
+                            if (mappedSeller) finalName = mappedSeller.name.toUpperCase();
+                        }
+
+                        const salesVal  = salesIdx  !== -1 ? parseAmount(row[salesIdx])  : 0;
+                        const prizesVal = prizesIdx !== -1 ? parseAmount(row[prizesIdx]) : 0;
+                        if (salesVal === 0 && prizesVal === 0) return;
+
+                        const key = `${finalName}||${currency}`;
+                        const existing = consolidatedMG.get(key);
+                        if (existing) {
+                            existing.sales  += salesVal;
+                            existing.prizes += prizesVal;
+                        } else {
+                            consolidatedMG.set(key, {
+                                vendorName: finalName,
+                                productName: productName || 'WORLDDEPORTES',
+                                sales:  salesVal,
+                                prizes: prizesVal,
+                                sourceRow: { ...row, _currency: currency }
+                            });
+                        }
                     }
                 });
 
@@ -646,12 +767,15 @@ export const SalesImportModal: React.FC<SalesImportModalProps> = ({ onClose, onI
                     // La moneda se toma de la propia celda (BS/$ del prefijo) o del archivo
                     const rowCurrency = parsed.currency;
 
-                    // El Grupo es la entidad que actúa como Vendedor / Concesionario en el sistema
-                    let finalGrupo = parsed.grupo;
-                    const rawGrupoKey = parsed.grupo.trim().toUpperCase();
-                    if (sellerAliases[rawGrupoKey]) {
-                        const mappedSeller = allSellers.find(s => Number(s.id) === sellerAliases[rawGrupoKey]);
-                        if (mappedSeller) finalGrupo = mappedSeller.name.toUpperCase();
+                    // ── Regla de Negocio Senior:
+                    // Si el grupo contiene GRANDE o en el registro está la palabra GRANDE,
+                    // no se agrupan en el grupo ficticio "GRANDE": cada taquilla se toma como vendedor individual sin agrupar.
+                    const isGrande = parsed.isGrande;
+                    let finalVendorName = isGrande ? parsed.agencyName : parsed.grupo;
+                    const rawVendorKey = finalVendorName.trim().toUpperCase();
+                    if (sellerAliases[rawVendorKey]) {
+                        const mappedSeller = allSellers.find(s => Number(s.id) === sellerAliases[rawVendorKey]);
+                        if (mappedSeller) finalVendorName = mappedSeller.name.toUpperCase();
                     }
 
                     const salesVal = salesIdx !== -1 ? parseAmount(row[salesIdx]) : 0;
@@ -660,16 +784,17 @@ export const SalesImportModal: React.FC<SalesImportModalProps> = ({ onClose, onI
                     if (salesVal === 0 && prizesVal === 0) return; // omitir filas vacías
 
                     rows.push({
-                        vendorName: finalGrupo,        // Nombre del Grupo (Seller)
-                        agencyName: parsed.agencyName, // Nombre de la Agencia / Taquilla
+                        vendorName: finalVendorName,        // Vendedor individual (si es GRANDE) o Grupo Concesionario
+                        agencyName: parsed.agencyName,     // Nombre de la Agencia / Taquilla
                         sales: salesVal,
                         prizes: prizesVal,
                         sourceRow: {
                             ...row,
                             _currency: rowCurrency,
-                            _grupo: finalGrupo,
+                            _grupo: isGrande ? finalVendorName : parsed.grupo,
                             _agencyName: parsed.agencyName,
-                            _operadora: parsed.operadora
+                            _operadora: parsed.operadora,
+                            _isIndividual: isGrande
                         }
                     });
                 });
@@ -833,15 +958,15 @@ export const SalesImportModal: React.FC<SalesImportModalProps> = ({ onClose, onI
             const allSales = await api.getSales();
             
             // Check for duplicates
-            const currentProductName = session.productName.toUpperCase();
             const currentDate = session.date;
 
             const nonDuplicateRows = session.rows.filter(row => {
                 const vendorName = row.vendorName.toUpperCase();
+                const rowProductName = (row.productName || session.productName).toUpperCase();
                 const rowCurrency = (row.sourceRow?._currency || session.currency).toUpperCase();
                 const isDuplicate = allSales.some(sale => 
                     sale.sellerName.trim().toUpperCase() === vendorName.trim().toUpperCase() &&
-                    sale.productName.toUpperCase() === currentProductName &&
+                    sale.productName.toUpperCase() === rowProductName &&
                     sale.currencyName.toUpperCase() === rowCurrency &&
                     sale.date === currentDate &&
                     (row.agencyName ? (sale.agencyName?.trim().toUpperCase() === row.agencyName.trim().toUpperCase()) : true)
@@ -872,8 +997,9 @@ export const SalesImportModal: React.FC<SalesImportModalProps> = ({ onClose, onI
                     const seller = currentSellers.find(s => s.name.trim().toUpperCase() === r.vendorName.trim().toUpperCase());
                     if (!seller) return true;
                     
-                    const productId = `p-${session.productName.toLowerCase().replace(/\s/g, '-')}`;
-                    const product = seller.products.find(p => String(p.id) === String(productId) || p.name.toUpperCase() === session.productName.toUpperCase());
+                    const rowProductName = (r.productName || session.productName).trim().toUpperCase();
+                    const productId = `p-${rowProductName.toLowerCase().replace(/\s/g, '-')}`;
+                    const product = seller.products.find(p => String(p.id) === String(productId) || p.name.toUpperCase() === rowProductName);
                     if (!product) return true;
 
                     // Verificar si tiene la moneda específica de esta fila configurada
@@ -908,127 +1034,159 @@ export const SalesImportModal: React.FC<SalesImportModalProps> = ({ onClose, onI
         setLoading(true);
         
         try {
-        let updatedSession = { ...session, rows: [...session.rows] };
+            let updatedSession = { ...session, rows: [...session.rows] };
+            const currentSellers = await api.getSellers();
 
-        const productId = `p-${session.productName.toLowerCase().replace(/\s/g, '-')}`;
+            for (const v of missingVendors) {
+                // Filas asociadas a este vendedor
+                const vendorRows = updatedSession.rows.filter(r => r.vendorName.trim().toUpperCase() === v.name.trim().toUpperCase());
 
-        const currentSellers = await api.getSellers();
+                // Productos que este vendedor maneja en la importación
+                const vendorProducts = Array.from(new Set(
+                    vendorRows.map(r => (r.productName || session.productName).trim().toUpperCase())
+                ));
+                if (vendorProducts.length === 0) {
+                    vendorProducts.push(session.productName.trim().toUpperCase() || 'PARLEY');
+                }
 
-        for (const v of missingVendors) {
-            // Obtener todas las monedas que este vendedor tiene en la sesión actual
-            const vendorCurrencies = Array.from(new Set(
-                updatedSession.rows
-                    .filter(r => r.vendorName.trim().toUpperCase() === v.name.trim().toUpperCase())
-                    .map(r => (r.sourceRow?._currency || session.currency || 'DOLAR').toUpperCase())
-            ));
-            if (vendorCurrencies.length === 0) vendorCurrencies.push((session.currency || 'DOLAR').toUpperCase());
-
-            // Check if mapped to existing
-            if (v.mappedSellerId) {
-                await addSellerAlias(v.mappedSellerId, v.name);
-                
-                // We need to update the session.rows immutably so they use the mapped seller's name
-                // instead of the raw alias name for the actual import execution.
-                const mappedSeller = currentSellers.find(s => Number(s.id) === v.mappedSellerId);
-                if (mappedSeller) {
-                    updatedSession.rows = updatedSession.rows.map(r => 
-                        r.vendorName.trim().toUpperCase() === v.name.trim().toUpperCase()
-                            ? { ...r, vendorName: mappedSeller.name.toUpperCase() }
-                            : r
-                    );
-
-                    // If the mapped seller didn't have the product/currency configured, add it and save
-                    let product = mappedSeller.products.find(p => String(p.id) === String(productId) || p.name.toUpperCase() === session.productName.toUpperCase());
-                    let needsUpdate = false;
+                // Si está mapeado a un vendedor existente
+                if (v.mappedSellerId) {
+                    await addSellerAlias(v.mappedSellerId, v.name);
                     
-                    if (!product) {
-                        product = {
-                            id: productId,
-                            name: session.productName,
-                            currencies: []
-                        };
-                        mappedSeller.products.push(product);
-                        needsUpdate = true;
-                    }
-                    
-                    for (const curr of vendorCurrencies) {
-                        let currencyConfig = product.currencies.find(c => String(c.id).toUpperCase() === curr || c.name.toUpperCase() === curr);
-                        if (!currencyConfig) {
-                            currencyConfig = {
-                                id: curr,
-                                name: curr,
-                                commissionPct: v.commissionPct || 0,
-                                partPct: v.partPct || 0
-                            };
-                            product.currencies.push(currencyConfig);
-                            needsUpdate = true;
-                        } else if (currencyConfig.commissionPct === 0 && currencyConfig.partPct === 0 && (v.commissionPct > 0 || v.partPct > 0)) {
-                            currencyConfig.commissionPct = v.commissionPct;
-                            currencyConfig.partPct = v.partPct;
-                            needsUpdate = true;
+                    const mappedSeller = currentSellers.find(s => Number(s.id) === v.mappedSellerId);
+                    if (mappedSeller) {
+                        updatedSession.rows = updatedSession.rows.map(r => 
+                            r.vendorName.trim().toUpperCase() === v.name.trim().toUpperCase()
+                                ? { ...r, vendorName: mappedSeller.name.toUpperCase() }
+                                : r
+                        );
+
+                        let needsUpdate = false;
+                        for (const prodName of vendorProducts) {
+                            const prodId = `p-${prodName.toLowerCase().replace(/\s/g, '-')}`;
+                            let product = mappedSeller.products.find(p => String(p.id) === String(prodId) || p.name.toUpperCase() === prodName);
+                            if (!product) {
+                                product = {
+                                    id: prodId,
+                                    name: prodName,
+                                    currencies: []
+                                };
+                                mappedSeller.products.push(product);
+                                needsUpdate = true;
+                            }
+
+                            const prodCurrencies = Array.from(new Set(
+                                vendorRows
+                                    .filter(r => (r.productName || session.productName).trim().toUpperCase() === prodName)
+                                    .map(r => (r.sourceRow?._currency || session.currency || 'DOLAR').toUpperCase())
+                            ));
+                            if (prodCurrencies.length === 0) prodCurrencies.push((session.currency || 'DOLAR').toUpperCase());
+
+                            for (const curr of prodCurrencies) {
+                                let currencyConfig = product.currencies.find(c => String(c.id).toUpperCase() === curr || c.name.toUpperCase() === curr);
+                                if (!currencyConfig) {
+                                    currencyConfig = {
+                                        id: curr,
+                                        name: curr,
+                                        commissionPct: v.commissionPct || 0,
+                                        partPct: v.partPct || 0
+                                    };
+                                    product.currencies.push(currencyConfig);
+                                    needsUpdate = true;
+                                } else if (currencyConfig.commissionPct === 0 && currencyConfig.partPct === 0 && (v.commissionPct > 0 || v.partPct > 0)) {
+                                    currencyConfig.commissionPct = v.commissionPct;
+                                    currencyConfig.partPct = v.partPct;
+                                    needsUpdate = true;
+                                }
+                            }
+                        }
+
+                        if (needsUpdate) {
+                            await api.updateSeller(mappedSeller);
                         }
                     }
+                    continue;
+                }
 
+                const existingSeller = currentSellers.find(s => s.name.trim().toUpperCase() === v.name.trim().toUpperCase());
+                
+                if (existingSeller) {
+                    let needsUpdate = false;
+                    for (const prodName of vendorProducts) {
+                        const prodId = `p-${prodName.toLowerCase().replace(/\s/g, '-')}`;
+                        let product = existingSeller.products.find(p => String(p.id) === String(prodId) || p.name.toUpperCase() === prodName);
+                        
+                        if (!product) {
+                            product = {
+                                id: prodId,
+                                name: prodName,
+                                currencies: []
+                            };
+                            existingSeller.products.push(product);
+                            needsUpdate = true;
+                        }
+                        
+                        const prodCurrencies = Array.from(new Set(
+                            vendorRows
+                                .filter(r => (r.productName || session.productName).trim().toUpperCase() === prodName)
+                                .map(r => (r.sourceRow?._currency || session.currency || 'DOLAR').toUpperCase())
+                        ));
+                        if (prodCurrencies.length === 0) prodCurrencies.push((session.currency || 'DOLAR').toUpperCase());
+
+                        for (const curr of prodCurrencies) {
+                            let currencyConfig = product.currencies.find(c => String(c.id).toUpperCase() === curr || c.name.toUpperCase() === curr);
+                            if (!currencyConfig) {
+                                currencyConfig = {
+                                    id: curr,
+                                    name: curr,
+                                    commissionPct: v.commissionPct || 0,
+                                    partPct: v.partPct || 0
+                                };
+                                product.currencies.push(currencyConfig);
+                                needsUpdate = true;
+                            } else if (v.commissionPct > 0 || v.partPct > 0) {
+                                currencyConfig.commissionPct = v.commissionPct;
+                                currencyConfig.partPct = v.partPct;
+                                needsUpdate = true;
+                            }
+                        }
+                    }
+                    
                     if (needsUpdate) {
-                        await api.updateSeller(mappedSeller);
+                        await api.updateSeller(existingSeller);
                     }
-                }
-                continue;
-            }
+                } else {
+                    const productsToAdd = vendorProducts.map(prodName => {
+                        const prodId = `p-${prodName.toLowerCase().replace(/\s/g, '-')}`;
+                        const prodCurrencies = Array.from(new Set(
+                            vendorRows
+                                .filter(r => (r.productName || session.productName).trim().toUpperCase() === prodName)
+                                .map(r => (r.sourceRow?._currency || session.currency || 'DOLAR').toUpperCase())
+                        ));
+                        if (prodCurrencies.length === 0) prodCurrencies.push((session.currency || 'DOLAR').toUpperCase());
 
-            const existingSeller = currentSellers.find(s => s.name.trim().toUpperCase() === v.name.trim().toUpperCase());
-            
-            if (existingSeller) {
-                let product = existingSeller.products.find(p => String(p.id) === String(productId) || p.name.toUpperCase() === session.productName.toUpperCase());
-                
-                if (!product) {
-                    product = {
-                        id: productId,
-                        name: session.productName,
-                        currencies: []
-                    };
-                    existingSeller.products.push(product);
-                }
-                
-                for (const curr of vendorCurrencies) {
-                    let currencyConfig = product.currencies.find(c => String(c.id).toUpperCase() === curr || c.name.toUpperCase() === curr);
-                    if (!currencyConfig) {
-                        currencyConfig = {
-                            id: curr,
-                            name: curr,
-                            commissionPct: v.commissionPct,
-                            partPct: v.partPct
-                        };
-                        product.currencies.push(currencyConfig);
-                    } else if (v.commissionPct > 0 || v.partPct > 0) {
-                        currencyConfig.commissionPct = v.commissionPct;
-                        currencyConfig.partPct = v.partPct;
-                    }
-                }
-                
-                await api.updateSeller(existingSeller);
-            } else {
-                await api.addSeller({
-                    name: v.name,
-                    products: [
-                        {
-                            id: productId,
-                            name: session.productName,
-                            currencies: vendorCurrencies.map(curr => ({
+                        return {
+                            id: prodId,
+                            name: prodName,
+                            currencies: prodCurrencies.map(curr => ({
                                 id: curr,
                                 name: curr,
                                 commissionPct: v.commissionPct || 0,
                                 partPct: v.partPct || 0
                             }))
-                        }
-                    ]
-                });
-            }
-        }
+                        };
+                    });
 
-        setMissingVendors([]);
-        setSession(updatedSession);
-        await executeImport(updatedSession);
+                    await api.addSeller({
+                        name: v.name,
+                        products: productsToAdd
+                    });
+                }
+            }
+
+            setMissingVendors([]);
+            setSession(updatedSession);
+            await executeImport(updatedSession);
         } catch (error: any) {
             console.error(error);
             alert(`Error durante la importación: ${error.message || error}`);
@@ -1043,8 +1201,24 @@ export const SalesImportModal: React.FC<SalesImportModalProps> = ({ onClose, onI
         setLoading(true);
 
         try {
-            if (!(await getGlobalProducts()).includes(activeSession.productName.toUpperCase())) {
-                await addGlobalProduct(activeSession.productName);
+            // Asegurar que todos los productos globales presentes en la sesión existan en la lista de productos globales
+            const allSessionProducts = Array.from(new Set(
+                activeSession.rows
+                    .map(r => (r.productName || activeSession.productName).trim().toUpperCase())
+                    .filter(Boolean)
+            ));
+            if (activeSession.productName) {
+                allSessionProducts.push(activeSession.productName.trim().toUpperCase());
+            }
+
+            const currentGlobal = await getGlobalProducts();
+            const currentGlobalUpper = currentGlobal.map(p => p.toUpperCase());
+
+            for (const prodName of allSessionProducts) {
+                if (!currentGlobalUpper.includes(prodName)) {
+                    await addGlobalProduct(prodName);
+                    currentGlobalUpper.push(prodName);
+                }
             }
 
             const allSellers = await api.getSellers();
@@ -1056,25 +1230,26 @@ export const SalesImportModal: React.FC<SalesImportModalProps> = ({ onClose, onI
             }
 
             const weekId = dateToWeekId(activeSession.date);
-            const productId = `p-${activeSession.productName.toLowerCase().replace(/\s/g, '-')}`;
 
             for (const row of activeSession.rows) {
                 const seller = allSellers.find(s => s.name.trim().toUpperCase() === row.vendorName.trim().toUpperCase());
                 if (!seller) continue;
 
-                const rowCurrency = row.sourceRow?._currency || activeSession.currency;
+                const rowProductName = (row.productName || activeSession.productName).trim().toUpperCase();
+                const rowProductId = `p-${rowProductName.toLowerCase().replace(/\s/g, '-')}`;
+                const rowCurrency = (row.sourceRow?._currency || activeSession.currency || 'DOLAR').toUpperCase();
 
                 let sellerModified = false;
 
                 // Asegurar que el vendedor tenga el producto en su perfil
                 let product = seller.products.find(p => 
-                    String(p.id) === String(productId) || p.name.toUpperCase() === activeSession.productName.toUpperCase()
+                    String(p.id) === String(rowProductId) || p.name.toUpperCase() === rowProductName
                 );
                 
                 if (!product) {
                     product = {
-                        id: productId,
-                        name: activeSession.productName,
+                        id: rowProductId,
+                        name: rowProductName,
                         currencies: [{ id: rowCurrency, name: rowCurrency, commissionPct: 0, partPct: 0 }]
                     };
                     seller.products.push(product);
@@ -1083,7 +1258,7 @@ export const SalesImportModal: React.FC<SalesImportModalProps> = ({ onClose, onI
 
                 // Obtener moneda y sus porcentajes
                 let currencyConfig = product.currencies.find(c => 
-                    String(c.id).toUpperCase() === String(rowCurrency).toUpperCase() || c.name.toUpperCase() === rowCurrency.toUpperCase()
+                    String(c.id).toUpperCase() === rowCurrency || c.name.toUpperCase() === rowCurrency
                 );
 
                 // Si la moneda no existe en el producto del vendedor, la agregamos con 0% por defecto
@@ -1135,7 +1310,7 @@ export const SalesImportModal: React.FC<SalesImportModalProps> = ({ onClose, onI
                     agencyId: agencyId,
                     agencyName: row.agencyName,
                     productId: product.id,
-                    productName: activeSession.productName,
+                    productName: rowProductName,
                     currencyId: currencyConfig.id,
                     currencyName: rowCurrency,
                     amount: row.sales,
@@ -1368,12 +1543,112 @@ export const SalesImportModal: React.FC<SalesImportModalProps> = ({ onClose, onI
                                 </div>
                             </div>
 
+                            {/* Barra de Herramientas de Agrupación Manual cuando hay filas seleccionadas */}
+                            {selectedRowIndices.length > 0 && (
+                                <div className="glass-panel p-4 rounded-2xl border border-ios-blue/30 bg-ios-blue/5 flex flex-col md:flex-row items-center justify-between gap-3 animate-fade-in shadow-lg shadow-ios-blue/5">
+                                    <div className="flex items-center gap-2.5 text-ios-blue">
+                                        <div className="p-2 rounded-xl bg-ios-blue/10">
+                                            <Users size={18} />
+                                        </div>
+                                        <div>
+                                            <div className="text-xs font-bold leading-tight">
+                                                {selectedRowIndices.length} {selectedRowIndices.length === 1 ? 'fila seleccionada' : 'filas seleccionadas'}
+                                            </div>
+                                            <div className="text-[10px] text-ios-subtext">
+                                                Agrupar bajo un solo vendedor
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto justify-end">
+                                        <div className="relative flex-1 md:w-56">
+                                            <input
+                                                list="grouping-sellers-list"
+                                                type="text"
+                                                placeholder="Vendedor destino..."
+                                                value={bulkTargetSeller}
+                                                onChange={e => setBulkTargetSeller(e.target.value.toUpperCase())}
+                                                className="w-full bg-white dark:bg-[#2c2c2e] border border-black/10 dark:border-white/10 rounded-xl px-3 py-1.5 text-xs font-bold focus:ring-1 focus:ring-ios-blue outline-none"
+                                            />
+                                            <datalist id="grouping-sellers-list">
+                                                {allSellers.map(s => <option key={String(s.id)} value={s.name} />)}
+                                            </datalist>
+                                        </div>
+
+                                        <label className="flex items-center gap-1.5 text-[11px] font-semibold text-ios-subtext cursor-pointer select-none">
+                                            <input
+                                                type="checkbox"
+                                                checked={bulkSaveAlias}
+                                                onChange={e => setBulkSaveAlias(e.target.checked)}
+                                                className="rounded accent-ios-blue text-xs cursor-pointer"
+                                            />
+                                            Recordar alias
+                                        </label>
+
+                                        <button
+                                            type="button"
+                                            disabled={!bulkTargetSeller.trim()}
+                                            onClick={() => handleApplyManualGroup(bulkTargetSeller, selectedRowIndices, bulkSaveAlias)}
+                                            className="px-4 py-1.5 bg-ios-blue text-white rounded-xl text-xs font-bold shadow-md shadow-ios-blue/20 hover:brightness-110 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                                        >
+                                            Agrupar Selección
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => setSelectedRowIndices([])}
+                                            className="px-3 py-1.5 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 rounded-xl text-xs font-semibold text-ios-subtext transition-colors"
+                                        >
+                                            Deseleccionar
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Cabecera de la tabla con acción de Agrupar */}
+                            <div className="flex items-center justify-between gap-2 px-1">
+                                <span className="text-xs font-bold text-ios-subtext uppercase tracking-wider">
+                                    Detalle de Filas ({session.rows.length})
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const firstVendor = session.rows[0]?.vendorName || '';
+                                        setGroupingSourceAgent(firstVendor);
+                                        setGroupingTargetSeller('');
+                                        setGroupingCustomTarget('');
+                                        setGroupingSaveAlias(true);
+                                        setIsGroupingModalOpen(true);
+                                    }}
+                                    className="px-3 py-1.5 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-ios-blue/10 hover:text-ios-blue text-ios-subtext text-xs font-bold flex items-center gap-1.5 transition-colors border border-black/5 dark:border-white/5"
+                                >
+                                    <Users size={13} />
+                                    Agrupar Vendedor...
+                                </button>
+                            </div>
+
                             <div className="glass-panel rounded-2xl border border-black/5 dark:border-white/10 overflow-hidden">
                                 <div className="overflow-x-auto max-h-72 no-scrollbar">
                                     <table className="w-full text-left text-xs">
                                         <thead className="sticky top-0 bg-white dark:bg-[#1c1c1e] z-10 border-b border-black/5 dark:border-white/5">
                                             <tr className="text-ios-subtext font-bold">
-                                                <th className="px-4 py-3">Grupo (Vendedor)</th>
+                                                <th className="px-3 py-3 w-8 text-center">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selectedRowIndices.length === session.rows.length && session.rows.length > 0}
+                                                        onChange={e => {
+                                                            if (e.target.checked) {
+                                                                setSelectedRowIndices(session.rows.map((_, idx) => idx));
+                                                            } else {
+                                                                setSelectedRowIndices([]);
+                                                            }
+                                                        }}
+                                                        className="rounded accent-ios-blue cursor-pointer"
+                                                        title="Seleccionar todas"
+                                                    />
+                                                </th>
+                                                <th className="px-4 py-3">Vendedor / Grupo</th>
+                                                <th className="px-4 py-3">Producto</th>
                                                 {session.rows.some(r => r.agencyName) && (
                                                     <th className="px-4 py-3">Agencia / Taquilla</th>
                                                 )}
@@ -1389,10 +1664,48 @@ export const SalesImportModal: React.FC<SalesImportModalProps> = ({ onClose, onI
                                                 const rowCurr = row.sourceRow?._currency || session.currency;
                                                 const isBs = rowCurr === 'BOLIVARES VENEZOLANOS';
                                                 const isCop = rowCurr === 'PESO COLOMBIANA' || rowCurr === 'PESOS COLOMBIANOS';
+                                                const rowProd = row.productName || session.productName;
+                                                const isSelected = selectedRowIndices.includes(i);
+
                                                 return (
-                                                    <tr key={i} className="hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
-                                                        <td className="px-4 py-2.5 font-bold text-ios-blue">
-                                                            {row.vendorName}
+                                                    <tr key={i} className={`transition-colors ${isSelected ? 'bg-ios-blue/5' : 'hover:bg-black/5 dark:hover:bg-white/5'}`}>
+                                                        <td className="px-3 py-2.5 text-center">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={isSelected}
+                                                                onChange={e => {
+                                                                    if (e.target.checked) {
+                                                                        setSelectedRowIndices(prev => [...prev, i]);
+                                                                    } else {
+                                                                        setSelectedRowIndices(prev => prev.filter(idx => idx !== i));
+                                                                    }
+                                                                }}
+                                                                className="rounded accent-ios-blue cursor-pointer"
+                                                            />
+                                                        </td>
+                                                        <td className="px-4 py-2.5">
+                                                            <div className="flex items-center gap-1.5">
+                                                                <span className="font-bold text-ios-blue">{row.vendorName}</span>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        setGroupingSourceAgent(row.vendorName);
+                                                                        setGroupingTargetSeller('');
+                                                                        setGroupingCustomTarget('');
+                                                                        setGroupingSaveAlias(true);
+                                                                        setIsGroupingModalOpen(true);
+                                                                    }}
+                                                                    className="p-1 rounded-lg text-ios-subtext/50 hover:text-ios-blue hover:bg-ios-blue/10 transition-colors"
+                                                                    title={`Reasignar o agrupar ${row.vendorName}`}
+                                                                >
+                                                                    <UserCheck size={13} />
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-4 py-2.5">
+                                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10 text-ios-subtext">
+                                                                {rowProd}
+                                                            </span>
                                                         </td>
                                                         {session.rows.some(r => r.agencyName) && (
                                                             <td className="px-4 py-2.5 font-medium text-ios-text">
@@ -1414,13 +1727,29 @@ export const SalesImportModal: React.FC<SalesImportModalProps> = ({ onClose, onI
                                                         <td className="px-4 py-2.5 text-right tabular-nums text-ios-red">{row.prizes.toLocaleString()}</td>
                                                         <td className="px-4 py-2.5 text-right tabular-nums font-black">{(row.sales - row.prizes).toLocaleString()}</td>
                                                         <td className="px-4 py-2.5 text-center">
-                                                            <button 
-                                                                onClick={() => handleDeleteRow(i)} 
-                                                                className="p-1.5 text-ios-red/70 hover:text-ios-red hover:bg-ios-red/10 rounded-xl transition-colors"
-                                                                title="Eliminar fila"
-                                                            >
-                                                                <Trash2 size={16} />
-                                                            </button>
+                                                            <div className="flex items-center justify-center gap-1">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        setGroupingSourceAgent(row.vendorName);
+                                                                        setGroupingTargetSeller('');
+                                                                        setGroupingCustomTarget('');
+                                                                        setGroupingSaveAlias(true);
+                                                                        setIsGroupingModalOpen(true);
+                                                                    }}
+                                                                    className="p-1.5 text-ios-subtext hover:text-ios-blue hover:bg-ios-blue/10 rounded-xl transition-colors"
+                                                                    title="Agrupar a vendedor"
+                                                                >
+                                                                    <Users size={14} />
+                                                                </button>
+                                                                <button 
+                                                                    onClick={() => handleDeleteRow(i)} 
+                                                                    className="p-1.5 text-ios-red/70 hover:text-ios-red hover:bg-ios-red/10 rounded-xl transition-colors"
+                                                                    title="Eliminar fila"
+                                                                >
+                                                                    <Trash2 size={14} />
+                                                                </button>
+                                                            </div>
                                                         </td>
                                                     </tr>
                                                 );
@@ -1440,6 +1769,117 @@ export const SalesImportModal: React.FC<SalesImportModalProps> = ({ onClose, onI
                                     {loading ? <Loader2 className="animate-spin" /> : <><CheckCircle2 size={16} /> Validar e Importar</>}
                                 </button>
                             </div>
+
+                            {/* Submodal de Agrupación Manual */}
+                            {isGroupingModalOpen && (
+                                <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+                                    <div className="bg-white dark:bg-[#1c1c1e] w-full max-w-md rounded-3xl p-6 shadow-2xl border border-black/10 dark:border-white/10 space-y-5">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-2.5">
+                                                <div className="p-2 rounded-xl bg-ios-blue/10 text-ios-blue">
+                                                    <Users size={18} />
+                                                </div>
+                                                <h3 className="text-base font-bold">Agrupar a Vendedor</h3>
+                                            </div>
+                                            <button
+                                                onClick={() => setIsGroupingModalOpen(false)}
+                                                className="p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-full text-ios-subtext transition-colors"
+                                            >
+                                                <X size={16} />
+                                            </button>
+                                        </div>
+
+                                        <div className="space-y-4 text-xs">
+                                            <div className="space-y-1.5">
+                                                <label className="font-bold text-ios-subtext uppercase text-[10px]">Agente del archivo</label>
+                                                <select
+                                                    value={groupingSourceAgent}
+                                                    onChange={e => setGroupingSourceAgent(e.target.value)}
+                                                    className="w-full bg-black/5 dark:bg-white/5 rounded-xl px-3 py-2 font-bold outline-none border border-black/5 dark:border-white/5"
+                                                >
+                                                    {Array.from(new Set(session.rows.map(r => r.vendorName))).map(name => (
+                                                        <option key={name} value={name}>{name}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+
+                                            <div className="space-y-1.5">
+                                                <label className="font-bold text-ios-subtext uppercase text-[10px]">Asignar / Agrupar a</label>
+                                                <div className="space-y-2">
+                                                    <select
+                                                        value={groupingTargetSeller}
+                                                        onChange={e => {
+                                                            setGroupingTargetSeller(e.target.value);
+                                                            if (e.target.value) setGroupingCustomTarget('');
+                                                        }}
+                                                        className="w-full bg-black/5 dark:bg-white/5 rounded-xl px-3 py-2 font-bold outline-none border border-black/5 dark:border-white/5"
+                                                    >
+                                                        <option value="">-- Seleccionar vendedor existente --</option>
+                                                        {allSellers.map(s => (
+                                                            <option key={String(s.id)} value={s.name}>{s.name}</option>
+                                                        ))}
+                                                    </select>
+
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="h-px bg-black/10 dark:bg-white/10 flex-1"></div>
+                                                        <span className="text-[10px] text-ios-subtext uppercase font-bold">o nuevo</span>
+                                                        <div className="h-px bg-black/10 dark:bg-white/10 flex-1"></div>
+                                                    </div>
+
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Escribir nombre de nuevo vendedor..."
+                                                        value={groupingCustomTarget}
+                                                        onChange={e => {
+                                                            setGroupingCustomTarget(e.target.value.toUpperCase());
+                                                            if (e.target.value) setGroupingTargetSeller('');
+                                                        }}
+                                                        className="w-full bg-black/5 dark:bg-white/5 rounded-xl px-3 py-2 font-bold outline-none border border-black/5 dark:border-white/5 placeholder:font-normal"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <label className="flex items-start gap-2 pt-1 cursor-pointer select-none">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={groupingSaveAlias}
+                                                    onChange={e => setGroupingSaveAlias(e.target.checked)}
+                                                    className="rounded accent-ios-blue mt-0.5 cursor-pointer"
+                                                />
+                                                <span className="text-[11px] text-ios-subtext leading-snug">
+                                                    <strong>Guardar regla permanente:</strong> asociar siempre automáticamente <em>"{groupingSourceAgent}"</em> a este vendedor en futuras importaciones.
+                                                </span>
+                                            </label>
+                                        </div>
+
+                                        <div className="flex justify-end gap-2.5 pt-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsGroupingModalOpen(false)}
+                                                className="px-4 py-2 rounded-xl text-xs font-bold text-ios-subtext hover:bg-black/5"
+                                            >
+                                                Cancelar
+                                            </button>
+                                            <button
+                                                type="button"
+                                                disabled={!groupingTargetSeller && !groupingCustomTarget.trim()}
+                                                onClick={() => {
+                                                    const target = (groupingTargetSeller || groupingCustomTarget).trim().toUpperCase();
+                                                    if (!target) return;
+                                                    const matchingIndices = session.rows
+                                                        .map((r, idx) => r.vendorName.trim().toUpperCase() === groupingSourceAgent.trim().toUpperCase() ? idx : -1)
+                                                        .filter(idx => idx !== -1);
+                                                    handleApplyManualGroup(target, matchingIndices, groupingSaveAlias);
+                                                    setIsGroupingModalOpen(false);
+                                                }}
+                                                className="px-5 py-2 bg-ios-blue text-white rounded-xl text-xs font-bold shadow-md shadow-ios-blue/20 hover:brightness-110 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                                            >
+                                                Confirmar Agrupación
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -1449,8 +1889,8 @@ export const SalesImportModal: React.FC<SalesImportModalProps> = ({ onClose, onI
                                 <div className="w-16 h-16 rounded-full bg-ios-blue/10 text-ios-blue flex items-center justify-center mx-auto">
                                     <UserPlus size={32} />
                                 </div>
-                                <h3 className="text-xl font-bold">Configuración de Porcentajes por Grupo</h3>
-                                <p className="text-xs text-ios-subtext">Configura los porcentajes para los {missingVendors.length} grupos detectados en el archivo que no tienen este producto/moneda configurado.</p>
+                                <h3 className="text-xl font-bold">Configuración de Porcentajes por Vendedor / Grupo</h3>
+                                <p className="text-xs text-ios-subtext">Configura los porcentajes para los {missingVendors.length} vendedores o grupos detectados en el archivo que no tienen este producto/moneda configurado.</p>
                             </div>
 
                             {/* Panel de Asignación Rápida Masiva */}
@@ -1461,7 +1901,7 @@ export const SalesImportModal: React.FC<SalesImportModalProps> = ({ onClose, onI
                                     </div>
                                     <div>
                                         <h4 className="text-xs font-bold leading-tight">Asignación Masiva de Porcentajes</h4>
-                                        <p className="text-[10px] text-ios-subtext">Aplica comisión y participación a todos los {missingVendors.length} grupos faltantes</p>
+                                        <p className="text-[10px] text-ios-subtext">Aplica comisión y participación a todos los {missingVendors.length} vendedores/grupos faltantes</p>
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
