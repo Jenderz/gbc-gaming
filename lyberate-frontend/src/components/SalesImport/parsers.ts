@@ -158,7 +158,7 @@ export const analyzeImportData = (
     // 0. Detectar el nombre del producto sugerido basado en nombre de archivo y contenido
     const combinedStr = fileNameUpper + ' ' + contentStr;
     if (combinedStr.includes("BETM3")) productName = "PARLEY BETM3";
-    else if (combinedStr.includes("LOTOREY") || combinedStr.includes("LOTERIAS") || combinedStr.includes("BANKLOT")) productName = "LOTERIAS";
+    else if (fileNameUpper.includes("LOTOREY") || fileNameUpper.includes("LOTERIAS") || fileNameUpper.includes("BANKLOT") || contentStr.includes("BANKLOT") || contentStr.includes("LOTOREY")) productName = "LOTERIAS";
     else if (combinedStr.includes("MAXPLAY")) productName = "MAXPLAY";
     else if (combinedStr.includes("GALILEO")) productName = "GALILEO";
     else if (combinedStr.includes("POSNET")) productName = "POSNET";
@@ -177,16 +177,16 @@ export const analyzeImportData = (
     if (isMastergreen) {
         if (isParley) {
             detectedType = 'parley';
-            if (!productName) productName = 'PARLEY';
-        } else if (fileNameUpper.includes('ADMINWD')) {
+            if (!productName || productName === 'WORLDDEPORTES') productName = 'PARLEY';
+        } else if (fileNameUpper.includes('ADMINWD') || fileNameUpper.includes('INH')) {
             detectedType = 'adminwd';
-            productName = 'WORLDDEPORTES';
+            productName = 'PARLEY INH';
         } else {
             detectedType = 'mastergreen';
-            productName = 'WORLDDEPORTES';
+            if (!productName) productName = 'WORLDDEPORTES';
         }
 
-        let taqIdx = -1, salesIdx = -1, prizesIdx = -1;
+        let taqIdx = -1, salesIdx = -1, anuladosIdx = -1, prizesIdx = -1;
         let headerRowIndex = -1;
 
         for (let i = 0; i < Math.min(data.length, 10); i++) {
@@ -201,6 +201,8 @@ export const analyzeImportData = (
                 headerRowIndex = i;
                 const vIdx = row.findIndex((c: any, j: number) => j > tIdx && typeof c === 'string' && /venta/i.test(c));
                 salesIdx = vIdx !== -1 ? vIdx : taqIdx + 1;
+                const anIdx = row.findIndex((c: any, j: number) => j > tIdx && typeof c === 'string' && /anulad/i.test(c));
+                anuladosIdx = anIdx !== -1 ? anIdx : -1;
                 const pIdx = row.findIndex((c: any, j: number) => j > taqIdx && typeof c === 'string' && /premio/i.test(c));
                 prizesIdx = pIdx !== -1 ? pIdx : -1;
                 break;
@@ -217,7 +219,7 @@ export const analyzeImportData = (
 
             data.slice(headerRowIndex + 1).forEach((row: any[]) => {
                 const raw = String(row[taqIdx] ?? '').trim();
-                if (!raw || /^totales?/i.test(raw)) return;
+                if (!raw || /^total/i.test(raw)) return;
 
                 if (hasParleyBreakdown) {
                     const match = raw.match(/^parley\s+([^\s]+)\s+(usd|bs|cop)\s+(.+)$/i);
@@ -233,7 +235,9 @@ export const analyzeImportData = (
                         if (mappedSeller) vendorName = normalizeSellerName(mappedSeller.name);
                     }
 
-                    const salesVal  = salesIdx  !== -1 ? parseAmount(row[salesIdx])  : 0;
+                    const rawSalesVal = salesIdx !== -1 ? parseAmount(row[salesIdx]) : 0;
+                    const anuladosVal = anuladosIdx !== -1 ? parseAmount(row[anuladosIdx]) : 0;
+                    const salesVal  = Math.max(0, rawSalesVal - anuladosVal);
                     const prizesVal = prizesIdx !== -1 ? parseAmount(row[prizesIdx]) : 0;
                     if (salesVal === 0 && prizesVal === 0) return;
 
@@ -265,7 +269,9 @@ export const analyzeImportData = (
                         if (mappedSeller) finalName = mappedSeller.name.toUpperCase();
                     }
 
-                    const salesVal  = salesIdx  !== -1 ? parseAmount(row[salesIdx])  : 0;
+                    const rawSalesVal = salesIdx !== -1 ? parseAmount(row[salesIdx]) : 0;
+                    const anuladosVal = anuladosIdx !== -1 ? parseAmount(row[anuladosIdx]) : 0;
+                    const salesVal  = Math.max(0, rawSalesVal - anuladosVal);
                     const prizesVal = prizesIdx !== -1 ? parseAmount(row[prizesIdx]) : 0;
                     if (salesVal === 0 && prizesVal === 0) return;
 
@@ -526,7 +532,7 @@ export const analyzeImportData = (
     }
 
     // ─── 2. Buscador Universal Dinámico de Columnas ─────────────────────────
-    let vendorIdx = -1, salesIdx = -1, prizesIdx = -1;
+    let vendorIdx = -1, salesIdx = -1, anuladosIdx = -1, prizesIdx = -1;
     let headerRowIndex = -1;
 
     for (let i = 0; i < Math.min(data.length, 30); i++) {
@@ -536,11 +542,13 @@ export const analyzeImportData = (
         const vIdx = row.findIndex(c => typeof c === 'string' && /venta/i.test(c));
         const pIdx = row.findIndex(c => typeof c === 'string' && /premio|pagado|pago/i.test(c));
         const nIdx = row.findIndex(c => typeof c === 'string' && /nombre|agencia|agentes?|nivel|comercio|taquilla|distribuidor|usuario|vendedor/i.test(c));
+        const anIdx = row.findIndex(c => typeof c === 'string' && /anulad/i.test(c));
 
         if (vIdx !== -1 && nIdx !== -1) {
             salesIdx = vIdx;
             prizesIdx = pIdx;
             vendorIdx = nIdx;
+            anuladosIdx = anIdx !== -1 ? anIdx : -1;
             headerRowIndex = i;
             break;
         }
@@ -593,9 +601,13 @@ export const analyzeImportData = (
                     if (mappedSeller) finalName = mappedSeller.name.toUpperCase();
                 }
                 
+                const rawSalesVal = parseAmount(row[salesIdx]);
+                const anuladosVal = anuladosIdx !== -1 ? parseAmount(row[anuladosIdx]) : 0;
+                const salesVal = Math.max(0, rawSalesVal - anuladosVal);
+
                 rows.push({
                     vendorName: finalName,
-                    sales: parseAmount(row[salesIdx]),
+                    sales: salesVal,
                     prizes: prizesIdx !== -1 ? parseAmount(row[prizesIdx]) : 0,
                     sourceRow: row
                 });

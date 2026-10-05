@@ -107,9 +107,11 @@ export const SalesImportModal: React.FC<SalesImportModalProps> = ({ onClose, onI
                 try {
                     const data = e.target?.result;
                     if (!data) throw new Error("No se pudo leer el archivo");
+                    const isCsv = file.name.toLowerCase().endsWith('.csv');
                     const workbook = XLSX.read(data, {
                         type: 'array',
-                        codepage: 65001
+                        codepage: 65001,
+                        raw: isCsv
                     });
                     const firstSheetName = workbook.SheetNames[0];
                     const worksheet = workbook.Sheets[firstSheetName];

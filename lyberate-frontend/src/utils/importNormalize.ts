@@ -56,7 +56,11 @@ export function normalizeProductName(raw?: string | null): string {
     let s = raw.trim().toUpperCase().replace(/\s+/g, ' ');
 
     // 1. Detección y normalización de modalidades de Parley
-    if (s.includes('PARLEY') || s.includes('DERECHO') || s.startsWith('PD')) {
+    if (s.includes('PARLEY') || s.includes('DERECHO') || s.startsWith('PD') || s.includes('INH')) {
+        // Parley INH (Instituto Nacional de Hipódromos)
+        if (s.includes('INH')) {
+            return 'PARLEY INH';
+        }
         // Parley 4 o más
         if (s.includes('4+') || s.includes('4 +') || /\b4\s*L\b/i.test(s) || /\b4\s*LOGROS?\b/i.test(s)) {
             return 'PARLEY 4+';
@@ -85,7 +89,7 @@ export function normalizeProductName(raw?: string | null): string {
 
     // 2. Otros productos conocidos
     if (s.includes('BETM3')) return 'PARLEY BETM3';
-    if (s.includes('LOTOREY') || s.includes('LOTERIA') || s.includes('BANKLOT')) return 'LOTERIAS';
+    if (s.includes('LOTOREY') || s.includes('LOTERIAS') || s.includes('BANKLOT')) return 'LOTERIAS';
     if (s.includes('ANIMALITO')) return 'ANIMALITOS';
     if (s.includes('MAXPLAY')) return 'MAXPLAY';
     if (s.includes('GALILEO')) return 'GALILEO';
@@ -130,6 +134,7 @@ export const DEFAULT_PRODUCT_PERCENTAGES: Record<string, { commissionPct: number
     'PARLEY 4+':  { commissionPct: 10, partPct: 10 },
     'PARLEY PD':  { commissionPct: 15, partPct: 10 },
     'PARLEY':     { commissionPct: 12, partPct: 10 },
+    'PARLEY INH': { commissionPct: 12, partPct: 10 },
     'PARLEY BETM3':{ commissionPct: 12, partPct: 10 },
     'LOTERIAS':   { commissionPct: 10, partPct: 0  },
     'ANIMALITOS': { commissionPct: 10, partPct: 0  },
