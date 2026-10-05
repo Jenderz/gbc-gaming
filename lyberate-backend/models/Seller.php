@@ -80,28 +80,45 @@ class Seller {
 
     public static function update(int $id, array $data): bool {
         $db = getDB();
-        $fields = [];
-        $values = [];
+        $isLocalTx = false;
+        if (!$db->inTransaction()) {
+            $db->beginTransaction();
+            $isLocalTx = true;
+        }
 
-        foreach (['name', 'id_number', 'phone'] as $col) {
-            if (array_key_exists($col, $data)) {
-                $fields[] = "$col = ?";
-                $values[] = $data[$col];
+        try {
+            $fields = [];
+            $values = [];
+
+            foreach (['name', 'id_number', 'phone'] as $col) {
+                if (array_key_exists($col, $data)) {
+                    $fields[] = "$col = ?";
+                    $values[] = $data[$col];
+                }
             }
-        }
 
-        if (!empty($fields)) {
-            $values[] = $id;
-            $stmt = $db->prepare("UPDATE sellers SET " . implode(', ', $fields) . " WHERE id = ?");
-            $stmt->execute($values);
-        }
+            if (!empty($fields)) {
+                $values[] = $id;
+                $stmt = $db->prepare("UPDATE sellers SET " . implode(', ', $fields) . " WHERE id = ?");
+                $stmt->execute($values);
+            }
 
-        // Re-sync products if provided
-        if (array_key_exists('products', $data)) {
-            self::syncProducts($id, $data['products']);
-        }
+            // Re-sync products if provided
+            if (array_key_exists('products', $data)) {
+                self::syncProducts($id, $data['products']);
+            }
 
-        return true;
+            if ($isLocalTx) {
+                $db->commit();
+            }
+            return true;
+        } catch (\Throwable $e) {
+            if ($isLocalTx && $db->inTransaction()) {
+                $db->rollBack();
+            }
+            error_log("Error in Seller::update: " . $e->getMessage());
+            throw $e;
+        }
     }
 
     public static function delete(int $id): bool {
@@ -128,29 +145,47 @@ class Seller {
     }
 
     /**
-     * Replace all products & currencies for a seller (sync strategy).
+     * Replace all products & currencies for a seller (sync strategy with transaction safety).
      */
     private static function syncProducts(int $sellerId, array $products): void {
         $db = getDB();
-        // Delete existing (cascade deletes currency_configs)
-        $db->prepare("DELETE FROM products WHERE seller_id = ?")->execute([$sellerId]);
+        $isLocalTx = false;
+        if (!$db->inTransaction()) {
+            $db->beginTransaction();
+            $isLocalTx = true;
+        }
 
-        foreach ($products as $product) {
-            $stmt = $db->prepare("INSERT INTO products (seller_id, name) VALUES (?, ?)");
-            $stmt->execute([$sellerId, $product['name']]);
-            $productId = (int) $db->lastInsertId();
+        try {
+            // Delete existing (cascade deletes currency_configs)
+            $db->prepare("DELETE FROM products WHERE seller_id = ?")->execute([$sellerId]);
 
-            if (!empty($product['currencies'])) {
-                foreach ($product['currencies'] as $currency) {
-                    $stmtC = $db->prepare("INSERT INTO currency_configs (product_id, name, commission_pct, part_pct) VALUES (?, ?, ?, ?)");
-                    $stmtC->execute([
-                        $productId,
-                        $currency['name'],
-                        floatval($currency['commission_pct'] ?? $currency['commissionPct'] ?? 0),
-                        floatval($currency['part_pct'] ?? $currency['partPct'] ?? 0),
-                    ]);
+            foreach ($products as $product) {
+                $stmt = $db->prepare("INSERT INTO products (seller_id, name) VALUES (?, ?)");
+                $stmt->execute([$sellerId, $product['name']]);
+                $productId = (int) $db->lastInsertId();
+
+                if (!empty($product['currencies'])) {
+                    foreach ($product['currencies'] as $currency) {
+                        $stmtC = $db->prepare("INSERT INTO currency_configs (product_id, name, commission_pct, part_pct) VALUES (?, ?, ?, ?)");
+                        $stmtC->execute([
+                            $productId,
+                            $currency['name'],
+                            floatval($currency['commission_pct'] ?? $currency['commissionPct'] ?? 0),
+                            floatval($currency['part_pct'] ?? $currency['partPct'] ?? 0),
+                        ]);
+                    }
                 }
             }
+
+            if ($isLocalTx) {
+                $db->commit();
+            }
+        } catch (\Throwable $e) {
+            if ($isLocalTx && $db->inTransaction()) {
+                $db->rollBack();
+            }
+            error_log("Error in Seller::syncProducts: " . $e->getMessage());
+            throw $e;
         }
     }
 }

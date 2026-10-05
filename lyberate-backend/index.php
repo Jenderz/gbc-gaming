@@ -64,7 +64,7 @@ try {
 
         case 'seller-aliases':
             require_once __DIR__ . '/controllers/SellerAliasesController.php';
-            handleSellerAliases($method);
+            handleSellerAliases($method, $action);
             break;
 
         case 'sales':

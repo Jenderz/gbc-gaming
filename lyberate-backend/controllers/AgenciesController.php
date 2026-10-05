@@ -7,7 +7,7 @@ require_once __DIR__ . '/../middleware/auth.php';
 require_once __DIR__ . '/../utils/Response.php';
 
 function handleAgencies(string $method, ?string $id = null) {
-    requireRole(['Admin']);
+    requireRole(['Admin', 'Supervisor']);
 
     switch ($method) {
         case 'GET':

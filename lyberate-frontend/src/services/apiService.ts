@@ -1131,6 +1131,12 @@ export async function addSellerAlias(sellerId: string | number, aliasName: strin
     });
 }
 
+export async function deleteSellerAlias(aliasName: string): Promise<void> {
+    await apiRequest(`/seller-aliases?alias=${encodeURIComponent(aliasName)}`, {
+        method: 'DELETE',
+    });
+}
+
 // ─── Agency Portal API ────────────────────────────────────────────────────────
 // All requests are scoped server-side to owner_user_id from JWT.
 // ─────────────────────────────────────────────────────────────────────────────
