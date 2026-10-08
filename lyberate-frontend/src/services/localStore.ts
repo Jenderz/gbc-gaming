@@ -254,7 +254,7 @@ export const initLocalStore = () => {
         localStorage.setItem(KEYS.SELLERS, JSON.stringify(SEED_SELLERS));
         localStorage.setItem(KEYS.PAYMENTS, JSON.stringify(SEED_PAYMENTS));
         localStorage.setItem(KEYS.CURRENCIES, JSON.stringify(['DOLAR', 'PESO COLOMBIANA', 'BOLIVARES VENEZOLANOS']));
-        localStorage.setItem(KEYS.GLOBAL_PRODUCTS, JSON.stringify(['PARLEY BETM3', 'ANIMALITOS', 'LOTERIAS', 'AMERICANAS']));
+        localStorage.setItem(KEYS.GLOBAL_PRODUCTS, JSON.stringify(['PARLEY INH', 'ANIMALITOS', 'LOTERIAS', 'AMERICANAS']));
         localStorage.setItem(KEYS.SALES, JSON.stringify(SEED_SALES));
         localStorage.setItem(KEYS.AGENCIES, JSON.stringify([]));
         localStorage.setItem(KEYS.WEEKLY_TICKETS, JSON.stringify([]));
@@ -275,7 +275,35 @@ export const initLocalStore = () => {
             localStorage.setItem(KEYS.CURRENCIES, JSON.stringify(['DOLAR', 'PESO COLOMBIANA', 'BOLIVARES VENEZOLANOS']));
         }
         if (!localStorage.getItem(KEYS.GLOBAL_PRODUCTS)) {
-            localStorage.setItem(KEYS.GLOBAL_PRODUCTS, JSON.stringify(['PARLEY BETM3', 'ANIMALITOS', 'LOTERIAS', 'AMERICANAS']));
+            localStorage.setItem(KEYS.GLOBAL_PRODUCTS, JSON.stringify(['PARLEY INH', 'ANIMALITOS', 'LOTERIAS', 'AMERICANAS']));
+        }
+        // Migración automática de PARLEY BETM3 -> PARLEY INH en localStorage
+        try {
+            const rawProds = localStorage.getItem(KEYS.GLOBAL_PRODUCTS);
+            if (rawProds && rawProds.includes('PARLEY BETM3')) {
+                const list = JSON.parse(rawProds).map((p: string) => p === 'PARLEY BETM3' ? 'PARLEY INH' : p);
+                localStorage.setItem(KEYS.GLOBAL_PRODUCTS, JSON.stringify(Array.from(new Set(list))));
+            }
+            const rawSellers = localStorage.getItem(KEYS.SELLERS);
+            if (rawSellers && rawSellers.includes('PARLEY BETM3')) {
+                const sList = JSON.parse(rawSellers);
+                sList.forEach((s: any) => {
+                    (s.products || []).forEach((p: any) => {
+                        if (p.name === 'PARLEY BETM3') p.name = 'PARLEY INH';
+                    });
+                });
+                localStorage.setItem(KEYS.SELLERS, JSON.stringify(sList));
+            }
+            const rawSales = localStorage.getItem(KEYS.SALES);
+            if (rawSales && rawSales.includes('PARLEY BETM3')) {
+                const slList = JSON.parse(rawSales);
+                slList.forEach((sl: any) => {
+                    if (sl.productName === 'PARLEY BETM3') sl.productName = 'PARLEY INH';
+                });
+                localStorage.setItem(KEYS.SALES, JSON.stringify(slList));
+            }
+        } catch (e) {
+            console.warn('Error migrando PARLEY BETM3 en localStore:', e);
         }
         if (!localStorage.getItem(KEYS.SYSTEM_PREFS)) {
             localStorage.setItem(KEYS.SYSTEM_PREFS, JSON.stringify({
@@ -548,12 +576,26 @@ export const deleteAvailableCurrency = (name: string) => {
 // --- Global Products ---
 
 export const getGlobalProducts = (): string[] => {
-    return JSON.parse(localStorage.getItem(KEYS.GLOBAL_PRODUCTS) || '["PARLEY BETM3", "ANIMALITOS", "LOTERIAS", "AMERICANAS"]');
+    let prods: string[] = JSON.parse(localStorage.getItem(KEYS.GLOBAL_PRODUCTS) || '["PARLEY INH", "ANIMALITOS", "LOTERIAS", "AMERICANAS"]');
+    let modified = false;
+    prods = prods.map(p => {
+        if (p === 'PARLEY BETM3') {
+            modified = true;
+            return 'PARLEY INH';
+        }
+        return p;
+    });
+    prods = Array.from(new Set(prods));
+    if (modified) {
+        localStorage.setItem(KEYS.GLOBAL_PRODUCTS, JSON.stringify(prods));
+    }
+    return prods;
 };
 
 export const addGlobalProduct = (name: string) => {
     const products = getGlobalProducts();
-    const upperName = name.trim().toUpperCase();
+    let upperName = name.trim().toUpperCase();
+    if (upperName === 'PARLEY BETM3') upperName = 'PARLEY INH';
     if (upperName && !products.includes(upperName)) {
         products.push(upperName);
         localStorage.setItem(KEYS.GLOBAL_PRODUCTS, JSON.stringify(products));

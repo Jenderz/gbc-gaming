@@ -46,13 +46,16 @@ class Sale {
 
     public static function create(array $data): int {
         $db = getDB();
+        $productName = strtoupper(trim($data['product_name'] ?? ''));
+        if ($productName === 'PARLEY BETM3') $productName = 'PARLEY INH';
+
         $stmt = $db->prepare("INSERT INTO sales 
             (seller_id, agency_id, product_name, currency_name, amount, prize, commission, total, participation, total_vendor, total_bank, sale_date, week_id, registered_at, owner_user_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         $stmt->execute([
             $data['seller_id'],
             $data['agency_id'] ?? null,
-            $data['product_name'],
+            $productName ?: $data['product_name'],
             $data['currency_name'],
             roundFinance(floatval($data['amount'])),
             roundFinance(floatval($data['prize'] ?? 0)),

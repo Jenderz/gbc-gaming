@@ -56,9 +56,9 @@ export function normalizeProductName(raw?: string | null): string {
     let s = raw.trim().toUpperCase().replace(/\s+/g, ' ');
 
     // 1. Detección y normalización de modalidades de Parley
-    if (s.includes('PARLEY') || s.includes('DERECHO') || s.startsWith('PD') || s.includes('INH')) {
-        // Parley INH (Instituto Nacional de Hipódromos)
-        if (s.includes('INH')) {
+    if (s.includes('PARLEY') || s.includes('DERECHO') || s.startsWith('PD') || s.includes('INH') || s.includes('BETM3')) {
+        // Parley INH (Instituto Nacional de Hipódromos / BETM3)
+        if (s.includes('INH') || s.includes('BETM3')) {
             return 'PARLEY INH';
         }
         // Parley 4 o más
@@ -88,7 +88,7 @@ export function normalizeProductName(raw?: string | null): string {
     }
 
     // 2. Otros productos conocidos
-    if (s.includes('BETM3')) return 'PARLEY BETM3';
+    if (s.includes('BETM3')) return 'PARLEY INH';
     if (s.includes('LOTOREY') || s.includes('LOTERIAS') || s.includes('BANKLOT')) return 'LOTERIAS';
     if (s.includes('ANIMALITO')) return 'ANIMALITOS';
     if (s.includes('MAXPLAY')) return 'MAXPLAY';

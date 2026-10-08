@@ -160,8 +160,10 @@ class Seller {
             $db->prepare("DELETE FROM products WHERE seller_id = ?")->execute([$sellerId]);
 
             foreach ($products as $product) {
+                $pName = strtoupper(trim($product['name'] ?? ''));
+                if ($pName === 'PARLEY BETM3') $pName = 'PARLEY INH';
                 $stmt = $db->prepare("INSERT INTO products (seller_id, name) VALUES (?, ?)");
-                $stmt->execute([$sellerId, $product['name']]);
+                $stmt->execute([$sellerId, $pName]);
                 $productId = (int) $db->lastInsertId();
 
                 if (!empty($product['currencies'])) {

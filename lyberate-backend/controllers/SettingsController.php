@@ -131,6 +131,7 @@ function handleGlobalProducts(string $method, ?string $id, PDO $db) {
             requireRole(['Admin']);
             $data = getJsonBody();
             $name = strtoupper(trim($data['name'] ?? ''));
+            if ($name === 'PARLEY BETM3') $name = 'PARLEY INH';
             if (empty($name)) jsonError('Nombre de producto requerido');
 
             $stmt = $db->prepare("SELECT id FROM global_products WHERE name = ?");
@@ -147,6 +148,7 @@ function handleGlobalProducts(string $method, ?string $id, PDO $db) {
             if (!$id) jsonError('ID requerido');
             $data = getJsonBody();
             $name = strtoupper(trim($data['name'] ?? ''));
+            if ($name === 'PARLEY BETM3') $name = 'PARLEY INH';
             if (empty($name)) jsonError('Nombre de producto requerido');
 
             $stmt = $db->prepare("SELECT id FROM global_products WHERE name = ? AND id != ?");

@@ -1,6 +1,7 @@
 import { RawRow, ImportSession } from './types';
 import { Seller } from '../../services/apiService';
 import {
+    CANONICAL_CURRENCIES,
     normalizeCurrency,
     normalizeProductName,
     normalizeSellerName
@@ -27,12 +28,27 @@ export const detectFileCurrency = (fn: string): string => {
 };
 
 /**
+ * Lista de vendedores / taquillas de AMERICANAS que deben tratarse como vendedores independientes
+ * y no agruparse bajo su grupo principal (ej. CARACAS, DELICIAS).
+ */
+export const AMERICANAS_STANDALONE_VENDORS: string[] = [
+    'PUERTA NEGRA',
+    'LAVILLA',
+    'FATIMA',
+    'BODEGON NEVERA',
+    'BODEGON DE GLORIA',
+    'BRAVO SB',
+    'REINA DEL CAMPO SB',
+    'PAQUE CAMBAO'
+];
+
+/**
  * Parser para el formato AMERICANAS / Reportes de Centros Hípicos.
  */
 export const parseAmericanasName = (
     raw: string,
     defaultCurrency: string = 'DOLAR'
-): { currency: string; agencyName: string; grupo: string; operadora: string; isGrande: boolean } | null => {
+): { currency: string; agencyName: string; grupo: string; operadora: string; isGrande: boolean; isStandalone: boolean } | null => {
     if (!raw) return null;
     let s = String(raw).trim();
     if (!s) return null;
@@ -40,13 +56,13 @@ export const parseAmericanasName = (
     let currency = defaultCurrency;
     let rest = s;
 
-    // 1. Detectar prefijo de moneda
-    if (/^BS\s*/i.test(s)) {
+    // 1. Detectar prefijo de moneda (ej. BS, BS/, BS-, $, $/, USD)
+    if (/^BS[\s/.-]*/i.test(s)) {
         currency = 'BOLIVARES VENEZOLANOS';
-        rest = s.replace(/^BS\s*/i, '');
-    } else if (/^\$\s*/.test(s)) {
+        rest = s.replace(/^BS[\s/.-]*/i, '');
+    } else if (/^(\$|USD)[\s/.-]*/i.test(s)) {
         currency = 'DOLAR';
-        rest = s.replace(/^\$\s*/, '');
+        rest = s.replace(/^(\$|USD)[\s/.-]*/i, '');
     }
 
     // 2. Extraer paréntesis (operadoras / oficinas vs grupos entre paréntesis)
@@ -59,7 +75,7 @@ export const parseAmericanasName = (
         parenParts.push(m[1].trim().toUpperCase());
     }
     parenParts.forEach(p => {
-        if (/^(OFIC|W DEPORTES|WORLD DEPORTES|GBC|GBC GAMING|STREAM)/i.test(p)) {
+        if (/^(OFIC|W DEPORTES|WORLD DEPORTES|GBC|GBC GAMING|STREAM|STREM)/i.test(p)) {
             operadora = operadora ? `${operadora} / ${p}` : p;
         } else {
             potentialParenGroup = p;
@@ -106,14 +122,23 @@ export const parseAmericanasName = (
 
     if (!agencyName && !grupo) return null;
 
-    const isGrande = grupo.includes('GRANDE') || agencyName.toUpperCase().includes('GRANDE');
+    const normAgencyUpper = agencyName.toUpperCase();
+    const isExplicitStandalone = AMERICANAS_STANDALONE_VENDORS.some(v =>
+        normAgencyUpper === v ||
+        normAgencyUpper.startsWith(v + ' ') ||
+        normAgencyUpper.startsWith(v + '-') ||
+        normAgencyUpper.startsWith(v + '.') ||
+        normAgencyUpper.includes(v)
+    );
+    const isGrande = grupo.includes('GRANDE') || normAgencyUpper.includes('GRANDE') || isExplicitStandalone;
 
     return {
         currency,
         agencyName,
         grupo,
         operadora,
-        isGrande
+        isGrande,
+        isStandalone: isGrande
     };
 };
 
@@ -157,7 +182,13 @@ export const analyzeImportData = (
 
     // 0. Detectar el nombre del producto sugerido basado en nombre de archivo y contenido
     const combinedStr = fileNameUpper + ' ' + contentStr;
-    if (combinedStr.includes("BETM3")) productName = "PARLEY BETM3";
+    if (combinedStr.includes("BETM3")) {
+        productName = "PARLEY INH";
+        detectedType = 'betm3';
+        if ((contentStr.includes("VES") || contentStr.includes("BOLIVAR") || contentStr.includes("BOLÍVAR")) && !fileNameUpper.includes("USD") && !fileNameUpper.includes("DOLAR")) {
+            forcedCurrency = CANONICAL_CURRENCIES.BOLIVARES;
+        }
+    }
     else if (fileNameUpper.includes("LOTOREY") || fileNameUpper.includes("LOTERIAS") || fileNameUpper.includes("BANKLOT") || contentStr.includes("BANKLOT") || contentStr.includes("LOTOREY")) productName = "LOTERIAS";
     else if (combinedStr.includes("MAXPLAY")) productName = "MAXPLAY";
     else if (combinedStr.includes("GALILEO")) productName = "GALILEO";
@@ -473,8 +504,8 @@ export const analyzeImportData = (
                 if (!parsed) return;
 
                 const rowCurrency = parsed.currency;
-                const isGrande = parsed.isGrande;
-                let finalVendorName = isGrande ? parsed.agencyName : parsed.grupo;
+                const isStandalone = parsed.isStandalone ?? parsed.isGrande;
+                let finalVendorName = isStandalone ? parsed.agencyName : parsed.grupo;
                 const rawVendorKey = finalVendorName.trim().toUpperCase();
                 if (sellerAliases[rawVendorKey]) {
                     const mappedSeller = allSellers.find(s => Number(s.id) === sellerAliases[rawVendorKey]);
@@ -493,10 +524,10 @@ export const analyzeImportData = (
                     sourceRow: {
                         ...row,
                         _currency: rowCurrency,
-                        _grupo: isGrande ? finalVendorName : parsed.grupo,
+                        _grupo: isStandalone ? finalVendorName : parsed.grupo,
                         _agencyName: parsed.agencyName,
                         _operadora: parsed.operadora,
-                        _isIndividual: isGrande
+                        _isIndividual: isStandalone
                     }
                 });
             });

@@ -246,7 +246,7 @@ INSERT IGNORE INTO `currencies` (`name`) VALUES
 
 -- Catálogo de Productos Globales
 INSERT IGNORE INTO `global_products` (`name`) VALUES 
-('PARLEY BETM3'), 
+('PARLEY INH'), 
 ('ANIMALITOS'), 
 ('LOTERIAS'), 
 ('AMERICANAS');

@@ -182,7 +182,7 @@ INSERT INTO users (name, email, password_hash, role) VALUES
 INSERT INTO currencies (name) VALUES ('DOLAR'), ('PESO COLOMBIANA'), ('BOLIVARES VENEZOLANOS');
 
 -- Default global products
-INSERT INTO global_products (name) VALUES ('PARLEY BETM3'), ('ANIMALITOS'), ('LOTERIAS'), ('AMERICANAS');
+INSERT INTO global_products (name) VALUES ('PARLEY INH'), ('ANIMALITOS'), ('LOTERIAS'), ('AMERICANAS');
 
 -- Default system preferences
 INSERT INTO system_prefs (pref_key, pref_value) VALUES 

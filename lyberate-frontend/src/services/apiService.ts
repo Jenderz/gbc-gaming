@@ -240,21 +240,28 @@ function mapSeller(s: any): Seller {
         name: s.name,
         idNumber: s.id_number ?? s.idNumber ?? '',
         phone: s.phone ?? '',
-        products: (s.products || []).map((p: any) => ({
-            id: p.id,
-            name: p.name,
-            currencies: (p.currencies || []).map((c: any) => ({
-                id: c.id,
-                name: c.name,
-                commissionPct: Number(c.commission_pct ?? c.commissionPct ?? 0),
-                partPct: Number(c.part_pct ?? c.partPct ?? 0),
-            })),
-        })),
+        products: (s.products || []).map((p: any) => {
+            const rawName = String(p.name || '').trim();
+            const prodName = rawName.toUpperCase() === 'PARLEY BETM3' ? 'PARLEY INH' : rawName;
+            return {
+                id: p.id,
+                name: prodName,
+                currencies: (p.currencies || []).map((c: any) => ({
+                    id: c.id,
+                    name: c.name,
+                    commissionPct: Number(c.commission_pct ?? c.commissionPct ?? 0),
+                    partPct: Number(c.part_pct ?? c.partPct ?? 0),
+                })),
+            };
+        }),
         createdAt: s.created_at ?? s.createdAt ?? '',
     };
 }
 
 function mapSale(s: any): Sale {
+    const rawProd = (s.product_name ?? s.productName ?? '').toString().trim();
+    const prodName = rawProd.toUpperCase() === 'PARLEY BETM3' ? 'PARLEY INH' : rawProd;
+
     return {
         id: s.id,
         sellerId: s.seller_id ?? s.sellerId,
@@ -262,7 +269,7 @@ function mapSale(s: any): Sale {
         agencyId: s.agency_id ?? s.agencyId ?? undefined,
         agencyName: s.agency_name ?? s.agencyName ?? undefined,
         productId: s.product_id ?? s.productId ?? undefined,
-        productName: s.product_name ?? s.productName ?? '',
+        productName: prodName,
         currencyId: s.currency_id ?? s.currencyId ?? undefined,
         currencyName: s.currency_name ?? s.currencyName ?? '',
         amount: Number(s.amount),
@@ -637,10 +644,13 @@ export async function getSales(): Promise<Sale[]> {
 }
 
 export async function addSale(sale: Omit<Sale, 'id' | 'createdAt'>): Promise<Sale> {
+    const rawProd = (sale.productName || '').trim();
+    const finalProdName = rawProd.toUpperCase() === 'PARLEY BETM3' ? 'PARLEY INH' : rawProd;
+
     const payload = {
         seller_id: sale.sellerId,
         agency_id: sale.agencyId || null,
-        product_name: sale.productName,
+        product_name: finalProdName,
         currency_name: sale.currencyName,
         amount: sale.amount,
         prize: sale.prize || 0,
@@ -984,14 +994,17 @@ export async function deleteAvailableCurrency(name: string): Promise<void> {
 
 export async function getGlobalProducts(): Promise<string[]> {
     const data = await apiRequest('/settings/products');
-    return (data as any[]).map((p: any) => p.name);
+    const rawList: string[] = (data as any[]).map((p: any) => p.name);
+    const mapped = rawList.map(p => (p.trim().toUpperCase() === 'PARLEY BETM3' ? 'PARLEY INH' : p));
+    return Array.from(new Set(mapped));
 }
 
 export async function addGlobalProduct(name: string): Promise<boolean> {
     try {
+        const finalName = name.trim().toUpperCase() === 'PARLEY BETM3' ? 'PARLEY INH' : name;
         await apiRequest('/settings/products', {
             method: 'POST',
-            body: JSON.stringify({ name }),
+            body: JSON.stringify({ name: finalName }),
         });
         return true;
     } catch {
@@ -1217,9 +1230,12 @@ export async function getAgencySales(filters?: { weekId?: string; sellerId?: str
 }
 
 export async function addAgencySale(sale: Omit<Sale, 'id' | 'createdAt'>): Promise<Sale> {
+    const rawProd = (sale.productName || '').trim();
+    const finalProdName = rawProd.toUpperCase() === 'PARLEY BETM3' ? 'PARLEY INH' : rawProd;
+
     const payload = {
         seller_id:    sale.sellerId,
-        product_name: sale.productName,
+        product_name: finalProdName,
         currency_name: sale.currencyName,
         amount:        sale.amount,
         prize:         sale.prize || 0,
@@ -1243,21 +1259,25 @@ export async function addAgencySaleBatch(
     sales: Array<Omit<Sale, 'id' | 'createdAt'>>
 ): Promise<{ imported: number }> {
     const payload = {
-        sales: sales.map(s => ({
-            seller_id:     s.sellerId,
-            product_name:  s.productName,
-            currency_name: s.currencyName,
-            amount:        s.amount,
-            prize:         s.prize || 0,
-            commission:    s.commission || 0,
-            total:         s.total || 0,
-            participation: s.participation || 0,
-            total_vendor:  s.totalVendor || 0,
-            total_bank:    s.totalBank || 0,
-            sale_date:     s.date,
-            week_id:       s.weekId,
-            registered_at: s.registeredAt || new Date().toISOString(),
-        })),
+        sales: sales.map(s => {
+            const rawProd = (s.productName || '').trim();
+            const finalProdName = rawProd.toUpperCase() === 'PARLEY BETM3' ? 'PARLEY INH' : rawProd;
+            return {
+                seller_id:     s.sellerId,
+                product_name:  finalProdName,
+                currency_name: s.currencyName,
+                amount:        s.amount,
+                prize:         s.prize || 0,
+                commission:    s.commission || 0,
+                total:         s.total || 0,
+                participation: s.participation || 0,
+                total_vendor:  s.totalVendor || 0,
+                total_bank:    s.totalBank || 0,
+                sale_date:     s.date,
+                week_id:       s.weekId,
+                registered_at: s.registeredAt || new Date().toISOString(),
+            };
+        }),
     };
     return await apiRequest('/agency/sales/batch', {
         method: 'POST',
@@ -1405,7 +1425,9 @@ export async function upsertAgencyWeeklyTicket(
 
 export async function getAgencyProducts(): Promise<string[]> {
     const data = await apiRequest('/agency/products');
-    return data as string[];
+    const rawList: string[] = data as string[];
+    const mapped = rawList.map(p => (p.trim().toUpperCase() === 'PARLEY BETM3' ? 'PARLEY INH' : p));
+    return Array.from(new Set(mapped));
 }
 
 export async function getAgencyCurrencies(): Promise<string[]> {
