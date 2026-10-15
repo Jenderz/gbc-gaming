@@ -6,6 +6,7 @@ import {
     normalizeProductName,
     normalizeSellerName
 } from '../../utils/importNormalize';
+import { todayISO } from '../../utils/serverTime';
 
 export const parseAmount = (val: any): number => {
     if (val === null || val === undefined) return 0;
@@ -337,7 +338,7 @@ export const analyzeImportData = (
                         fileName,
                         productName,
                         currency: sessionCurrency,
-                        date: new Date().toISOString().split('T')[0],
+                        date: todayISO(),
                         rows: mgRows,
                         detectedType
                     },
@@ -551,7 +552,7 @@ export const analyzeImportData = (
                         fileName,
                         productName,
                         currency: forcedCurrency || 'DOLAR',
-                        date: new Date().toISOString().split('T')[0],
+                        date: todayISO(),
                         rows: consolidatedRows,
                         detectedType
                     },
@@ -672,7 +673,7 @@ export const analyzeImportData = (
             fileName,
             productName,
             currency: forcedCurrency || detectFileCurrency(fileName),
-            date: new Date().toISOString().split('T')[0],
+            date: todayISO(),
             rows: consolidatedRows,
             detectedType
         },

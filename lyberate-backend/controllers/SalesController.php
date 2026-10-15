@@ -38,6 +38,21 @@ function handleSales(string $method, ?string $action = null, ?string $id = null)
                 jsonSuccess(['imported' => $count], "$count ventas importadas");
                 break;
             }
+
+            if ($action === 'bulk-delete') {
+                // Bulk delete (e.g. undo an import or clear a filtered week)
+                requireRole(['Admin', 'Supervisor']);
+                $data = getJsonBody();
+                if (empty($data['ids']) || !is_array($data['ids'])) {
+                    jsonError('Se requiere un array de IDs en "ids"');
+                }
+                if (count($data['ids']) > 10000) {
+                    jsonError('Demasiados IDs en una sola operación (máximo 10000)');
+                }
+                $deleted = Sale::deleteBatch($data['ids']);
+                jsonSuccess(['deleted' => $deleted], "$deleted ventas eliminadas");
+                break;
+            }
             
             $data = getJsonBody();
             $err = validateRequired($data, ['seller_id', 'product_name', 'currency_name', 'amount', 'sale_date', 'week_id']);

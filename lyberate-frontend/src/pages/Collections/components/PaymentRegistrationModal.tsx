@@ -1,5 +1,5 @@
 import { FileText, X, CheckCircle2, Pencil } from 'lucide-react';
-import { Seller, getWeeklyPeriods } from '../../../services/apiService';
+import { Seller, getWeeklyPeriods, dateToWeekId } from '../../../services/apiService';
 import { WeekPickerInput } from '../../../components/WeekPickerInput';
 import { SearchableSelect } from '../../../components/SearchableSelect';
 
@@ -117,7 +117,11 @@ export const PaymentRegistrationModal = ({
                                     onChange={setFormDate}
                                     variant="modal"
                                 />
-                                {formDate && <p className="text-[10px] text-white/40 mt-1 px-1">📅 {getWeeklyPeriods([formDate])[0]?.label}</p>}
+                                {formDate && (
+                                    <p className="text-[10px] text-white/40 mt-1 px-1">
+                                        📅 {getWeeklyPeriods([formDate]).find(p => p.id === dateToWeekId(formDate))?.label}
+                                    </p>
+                                )}
                             </div>
                         </div>
                     </div>

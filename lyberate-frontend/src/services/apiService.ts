@@ -3,6 +3,8 @@
 // All functions are async and match the signatures used by components.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { now } from '../utils/serverTime';
+
 const API_BASE = (import.meta as any).env?.VITE_API_URL || 'https://mi.gbc-gaming.com/api';
 
 // ─── Types (re-exported from same definitions) ───────────────────────────────
@@ -220,6 +222,16 @@ async function apiRequest<T = any>(
     return json.data !== undefined ? json.data : json;
 }
 
+// ─── Server Time ────────────────────────────────────────────────────────────
+
+/** Hora oficial del servidor (America/Caracas, UTC-4). */
+export async function getServerTime(): Promise<{
+    datetime: string; date: string; weekday: number;
+    timezone: string; utc_offset_minutes: number; timestamp: number;
+}> {
+    return await apiRequest('/time');
+}
+
 // ─── Mapper functions (snake_case API → camelCase frontend) ──────────────────
 
 function mapUser(u: any): AppUser {
@@ -405,7 +417,7 @@ export const dateToWeekId = (date: string | Date): string => {
 
 export const getWeeklyPeriods = (extraDates: string[] = [], defaultCount = 8): WeekPeriod[] => {
     const weekIds = new Set<string>();
-    const today = new Date();
+    const today = now(); // hora del servidor (Caracas), no la del reloj de la PC
     for (let i = 0; i < defaultCount; i++) {
         const d = new Date(today);
         d.setDate(d.getDate() - i * 7);
@@ -674,6 +686,15 @@ export async function deleteSale(saleId: string | number): Promise<void> {
     await apiRequest(`/sales/${saleId}`, { method: 'DELETE' });
 }
 
+/** Borrado en lote de ventas. Devuelve cuántas se eliminaron. */
+export async function deleteSalesBatch(saleIds: (string | number)[]): Promise<number> {
+    const data = await apiRequest<{ deleted: number }>('/sales/bulk-delete', {
+        method: 'POST',
+        body: JSON.stringify({ ids: saleIds }),
+    });
+    return Number(data?.deleted ?? 0);
+}
+
 export async function updateSale(saleId: string | number, sale: Partial<Sale>): Promise<Sale> {
     const payload: any = {};
     if (sale.sellerId !== undefined) payload.seller_id = sale.sellerId;
@@ -717,6 +738,10 @@ export async function updatePayment(
         body: JSON.stringify(payload),
     });
     return mapPayment(data);
+}
+
+export async function deletePayment(paymentId: string | number): Promise<void> {
+    await apiRequest(`/payments/${paymentId}`, { method: 'DELETE' });
 }
 
 // ─── Agency Helpers ─────────────────────────────────────────────────────────
@@ -1310,6 +1335,15 @@ export async function deleteAgencySale(saleId: string | number): Promise<void> {
     await apiRequest(`/agency/sales/${saleId}`, { method: 'DELETE' });
 }
 
+/** Borrado en lote de ventas de la agencia. Devuelve cuántas se eliminaron. */
+export async function deleteAgencySalesBatch(saleIds: (string | number)[]): Promise<number> {
+    const data = await apiRequest<{ deleted: number }>('/agency/sales/bulk-delete', {
+        method: 'POST',
+        body: JSON.stringify({ ids: saleIds }),
+    });
+    return Number(data?.deleted ?? 0);
+}
+
 // ── Agency Payments ──────────────────────────────────────────────────────────
 
 export async function getAgencyPayments(filters?: { weekId?: string; sellerId?: string | number; status?: string }): Promise<Payment[]> {
@@ -1383,6 +1417,10 @@ export async function updateAgencyPayment(
         body: JSON.stringify(payload),
     });
     return mapPayment(data);
+}
+
+export async function deleteAgencyPayment(paymentId: string | number): Promise<void> {
+    await apiRequest(`/agency/payments/${paymentId}`, { method: 'DELETE' });
 }
 
 // ── Agency Weekly Tickets ────────────────────────────────────────────────────

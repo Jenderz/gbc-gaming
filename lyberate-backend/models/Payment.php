@@ -84,7 +84,19 @@ class Payment {
             $data['admin_note'] ?? null,
             $data['owner_user_id'] ?? null,
         ]);
-        return (int) $db->lastInsertId();
+        $newId = (int) $db->lastInsertId();
+
+        // Apply to weekly ticket immediately when created already approved
+        if (($data['status'] ?? 'pending') === 'approved') {
+            self::recalcWeeklyTicket(
+                (int) $data['seller_id'],
+                $data['week_id'],
+                $data['currency'],
+                isset($data['owner_user_id']) && $data['owner_user_id'] !== null ? (int) $data['owner_user_id'] : null
+            );
+        }
+
+        return $newId;
     }
 
     public static function updateStatus(int $id, string $status, ?string $adminNote = null): bool {
@@ -92,7 +104,6 @@ class Payment {
         $payment = self::findById($id);
         if (!$payment) return false;
 
-        $oldStatus = $payment['status'];
         $sql = "UPDATE payments SET status = ?, updated_at = NOW()";
         $params = [$status];
         if ($adminNote !== null) {
@@ -105,53 +116,56 @@ class Payment {
         $stmt = $db->prepare($sql);
         $stmt->execute($params);
 
-        // Update weekly ticket if payment type != credit
-        if ($payment['type'] !== 'credit') {
-            if ($oldStatus !== 'approved' && $status === 'approved') {
-                self::applyToWeeklyTicket($payment, false);
-            } elseif ($oldStatus === 'approved' && $status !== 'approved') {
-                self::applyToWeeklyTicket($payment, true);
-            }
-        }
+        // Recalculate the weekly ticket from the payments ledger (idempotent)
+        self::recalcWeeklyTicket(
+            (int) $payment['seller_id'],
+            $payment['week_id'],
+            $payment['currency'],
+            $payment['owner_user_id'] !== null ? (int) $payment['owner_user_id'] : null
+        );
 
         return true;
     }
 
     /**
-     * Apply payment amount to weekly ticket totals
+     * Recalculate weekly ticket total_paid/balance from the payments ledger.
+     * Idempotent: always derives the truth from approved non-credit payments,
+     * so it also self-heals payments that were never applied previously.
      */
-    private static function applyToWeeklyTicket(array $payment, bool $reverse = false): void {
+    private static function recalcWeeklyTicket(int $sellerId, string $weekId, string $currency, ?int $ownerUserId): void {
         $db = getDB();
-        $amount = $reverse ? -abs($payment['amount']) : abs($payment['amount']);
 
-        // Find existing ticket
-        $stmt = $db->prepare("SELECT * FROM weekly_tickets WHERE seller_id = ? AND week_id = ? AND currency = ?");
-        $stmt->execute([$payment['seller_id'], $payment['week_id'], $payment['currency']]);
+        $stmt = $db->prepare("SELECT COALESCE(SUM(amount), 0) AS paid, MAX(week_label) AS week_label 
+            FROM payments 
+            WHERE seller_id = ? AND week_id = ? AND currency = ? 
+              AND status = 'approved' AND type <> 'credit' 
+              AND owner_user_id <=> ?");
+        $stmt->execute([$sellerId, $weekId, $currency, $ownerUserId]);
+        $row = $stmt->fetch();
+        $totalPaid = round((float) ($row['paid'] ?? 0), 2);
+
+        $stmt = $db->prepare("SELECT * FROM weekly_tickets 
+            WHERE seller_id = ? AND week_id = ? AND currency = ? AND owner_user_id <=> ?");
+        $stmt->execute([$sellerId, $weekId, $currency, $ownerUserId]);
         $ticket = $stmt->fetch();
 
         if ($ticket) {
-            $newPaid = round($ticket['total_paid'] + $amount, 2);
-            $newBalance = round($ticket['total_bank'] - $newPaid, 2);
+            $balance = round($ticket['total_bank'] - $totalPaid, 2);
             $stmt = $db->prepare("UPDATE weekly_tickets SET total_paid = ?, balance = ?, updated_at = NOW() WHERE id = ?");
-            $stmt->execute([$newPaid, $newBalance, $ticket['id']]);
-        } elseif (!$reverse) {
-            // Create new ticket entry
-            $vendorName = '';
-            $stmtS = $db->prepare("SELECT name FROM sellers WHERE id = ?");
-            $stmtS->execute([$payment['seller_id']]);
-            $seller = $stmtS->fetch();
-            if ($seller) $vendorName = $seller['name'];
-
+            $stmt->execute([$totalPaid, $balance, $ticket['id']]);
+        } elseif ($totalPaid != 0) {
+            // Create a minimal ticket when a payment exists but sales were not imported yet
             $stmt = $db->prepare("INSERT INTO weekly_tickets 
-                (seller_id, week_id, week_label, total_sales, total_prize, total_commission, total_net, total_participation, total_vendor, total_bank, total_paid, balance, currency, status)
-                VALUES (?, ?, ?, 0, 0, 0, 0, 0, 0, 0, ?, ?, ?, 'open')");
+                (seller_id, week_id, week_label, total_sales, total_prize, total_commission, total_net, total_participation, total_vendor, total_bank, total_paid, balance, currency, status, owner_user_id)
+                VALUES (?, ?, ?, 0, 0, 0, 0, 0, 0, 0, ?, ?, ?, 'open', ?)");
             $stmt->execute([
-                $payment['seller_id'],
-                $payment['week_id'],
-                $payment['week_label'],
-                round($amount, 2),
-                round(-$amount, 2),
-                $payment['currency'],
+                $sellerId,
+                $weekId,
+                $row['week_label'] ?? '',
+                $totalPaid,
+                round(-$totalPaid, 2),
+                $currency,
+                $ownerUserId,
             ]);
         }
     }
@@ -169,14 +183,6 @@ class Payment {
         $existing = self::findById($id);
         if (!$existing) return false;
 
-        // If the payment was approved and financial fields are changing, reverse the old ticket first
-        $wasApproved = $existing['status'] === 'approved';
-        $oldType = $existing['type'] ?? 'payment';
-
-        if ($wasApproved && $oldType !== 'credit') {
-            self::applyToWeeklyTicket($existing, true); // Reverse old amount
-        }
-
         $stmt = $db->prepare("UPDATE payments SET 
             seller_id = ?, week_label = ?, week_id = ?, amount = ?, currency = ?,
             bank = ?, method = ?, reference = ?, payment_date = ?, type = ?, updated_at = NOW()
@@ -191,16 +197,46 @@ class Payment {
             $data['method'] ?? $existing['method'],
             $data['reference'] ?? $existing['reference'],
             $data['payment_date'] ?? $existing['payment_date'],
-            $data['type'] ?? $oldType,
+            $data['type'] ?? $existing['type'] ?? 'payment',
             $id,
         ]);
 
-        // Re-apply the new amount to weekly ticket if still approved
-        if ($wasApproved && ($data['type'] ?? $oldType) !== 'credit') {
+        if ($result) {
+            // Recalculate both the previous and the new ticket tuples (idempotent)
+            $owner = $existing['owner_user_id'] !== null ? (int) $existing['owner_user_id'] : null;
+            self::recalcWeeklyTicket((int) $existing['seller_id'], $existing['week_id'], $existing['currency'], $owner);
+
             $updated = self::findById($id);
-            if ($updated) {
-                self::applyToWeeklyTicket($updated, false);
+            if ($updated && (
+                (string) $updated['seller_id'] !== (string) $existing['seller_id'] ||
+                (string) $updated['week_id'] !== (string) $existing['week_id'] ||
+                (string) $updated['currency'] !== (string) $existing['currency']
+            )) {
+                self::recalcWeeklyTicket((int) $updated['seller_id'], $updated['week_id'], $updated['currency'], $owner);
             }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Delete a payment and recalculate its weekly ticket.
+     */
+    public static function delete(int $id): bool {
+        $db = getDB();
+        $payment = self::findById($id);
+        if (!$payment) return false;
+
+        $stmt = $db->prepare("DELETE FROM payments WHERE id = ?");
+        $result = $stmt->execute([$id]);
+
+        if ($result) {
+            self::recalcWeeklyTicket(
+                (int) $payment['seller_id'],
+                $payment['week_id'],
+                $payment['currency'],
+                $payment['owner_user_id'] !== null ? (int) $payment['owner_user_id'] : null
+            );
         }
 
         return $result;

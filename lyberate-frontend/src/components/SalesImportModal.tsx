@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { FileUp, X } from 'lucide-react';
+import { todayISO } from '../utils/serverTime';
 import {
     getGlobalProducts,
     addGlobalProduct,
@@ -355,7 +356,7 @@ export const SalesImportModal: React.FC<SalesImportModalProps> = ({ onClose, onI
             fileName,
             productName: '',
             currency: 'DOLAR',
-            date: new Date().toISOString().split('T')[0],
+            date: todayISO(),
             rows: Array.from(consolidated.values()),
             detectedType: 'unknown'
         });

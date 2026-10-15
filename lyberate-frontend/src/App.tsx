@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { DashboardLayout } from './components/DashboardLayout';
@@ -16,6 +16,9 @@ import { VendorPortal } from './pages/VendorPortal';
 import { WeeklyClosing } from './pages/WeeklyClosing';
 import { Settings } from './pages/Settings';
 import { AgencyPortal } from './pages/AgencyPortal/AgencyPortal';
+
+import { getServerTime } from './services/apiService';
+import { setServerWallClock } from './utils/serverTime';
 
 // Preloader Corporativo "GBC GAMING"
 const GenericPreloader = () => {
@@ -159,6 +162,22 @@ const AppContent = () => {
 };
 
 function App() {
+    // Sincroniza el reloj de la app con la hora del servidor (UTC-4).
+    // Se repite al volver a la pestaña por si el primer intento falló.
+    useEffect(() => {
+        const sync = () => {
+            getServerTime()
+                .then(t => setServerWallClock(t.datetime))
+                .catch(() => { /* respaldo: zona horaria local */ });
+        };
+        sync();
+        const onVisibility = () => {
+            if (document.visibilityState === 'visible') sync();
+        };
+        document.addEventListener('visibilitychange', onVisibility);
+        return () => document.removeEventListener('visibilitychange', onVisibility);
+    }, []);
+
     return (
         <AuthProvider>
             <AppContent />

@@ -10,6 +10,7 @@ import { useWeeklyFilter } from '../hooks/useWeeklyFilter';
 import { useApiScope } from '../hooks/useApiScope';
 import { Seller, Sale, dateToWeekId } from '../services/apiService';
 import { roundFinance, getSymbol } from '../utils/finance';
+import { now } from '../utils/serverTime';
 import { useSmartTable } from '../hooks/useSmartTable';
 import { TablePaginator } from '../components/SmartTable/TablePaginator';
 import { TableSkeleton } from '../components/SmartTable/TableSkeleton';
@@ -30,6 +31,10 @@ export const Sales = () => {
     // View state
     const [sellers, setSellers] = useState<Seller[]>([]);
     const [sales, setSales] = useState<Sale[]>([]);
+
+    // Selección múltiple para borrado en lote
+    const [selectedSaleIds, setSelectedSaleIds] = useState<Set<string>>(new Set());
+    const [isDeletingSelected, setIsDeletingSelected] = useState(false);
 
     // ─── Smart Filter (centralizado) ────────────────────────────────────
     const {
@@ -60,6 +65,11 @@ export const Sales = () => {
             try {
                 await api.deleteSale(saleId);
                 await refreshSales();
+                setSelectedSaleIds(prev => {
+                    const next = new Set(prev);
+                    next.delete(String(saleId));
+                    return next;
+                });
             } catch (err: any) {
                 alert(`Error al eliminar venta: ${err?.message || 'Error desconocido'}`);
             }
@@ -81,7 +91,7 @@ export const Sales = () => {
     };
     const getDefaultDate = (range: typeof filterRange) => {
         if (range) return toLocalDateStr(range.start);
-        return toLocalDateStr(new Date());
+        return toLocalDateStr(now());
     };
     const [date, setDate] = useState(() => getDefaultDate(filterRange));
 
@@ -278,6 +288,54 @@ export const Sales = () => {
         totalPages: salesTotalPages, totalCount: salesTotalCount,
         rangeFrom: salesRangeFrom, rangeTo: salesRangeTo,
     } = useSmartTable(salesRowsFiltered, { defaultPageSize: 40 });
+
+    // ─── Selección múltiple (borrado en lote) ────────────────────────────────
+    const filteredSaleIds = useMemo(() => salesRowsFiltered.map(r => String(r.id)), [salesRowsFiltered]);
+    const allFilteredSelected = filteredSaleIds.length > 0 && filteredSaleIds.every(id => selectedSaleIds.has(id));
+    const someFilteredSelected = filteredSaleIds.some(id => selectedSaleIds.has(id));
+
+    const toggleSaleSelected = (id: string) => {
+        setSelectedSaleIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id); else next.add(id);
+            return next;
+        });
+    };
+
+    const clearSaleSelection = () => setSelectedSaleIds(new Set());
+
+    /** Marca/desmarca todas las ventas del filtro actual (todas las páginas) */
+    const toggleSelectAllFiltered = () => {
+        setSelectedSaleIds(prev => {
+            const all = filteredSaleIds.length > 0 && filteredSaleIds.every(id => prev.has(id));
+            const next = new Set(prev);
+            if (all) filteredSaleIds.forEach(id => next.delete(id));
+            else filteredSaleIds.forEach(id => next.add(id));
+            return next;
+        });
+    };
+
+    const handleDeleteSelected = async () => {
+        const ids = Array.from(selectedSaleIds);
+        if (ids.length === 0) return;
+        const confirmed = window.confirm(
+            `⚠️ ¿Eliminar ${ids.length} venta(s)?\n\nEl período y los totales se recalcularán automáticamente.\nEsta acción no se puede deshacer.`
+        );
+        if (!confirmed) return;
+        setIsDeletingSelected(true);
+        try {
+            const deleted = await api.deleteSalesBatch(ids);
+            await refreshSales();
+            clearSaleSelection();
+            if (deleted < ids.length) {
+                alert(`Se eliminaron ${deleted} de ${ids.length} ventas. El resto ya no existía.`);
+            }
+        } catch (err: any) {
+            alert(`Error al eliminar ventas: ${err?.message || 'Error desconocido'}`);
+        } finally {
+            setIsDeletingSelected(false);
+        }
+    };
 
     const activeCurrencies = useMemo(() => {
         const currenciesMap = new Map<string, { name: string, sym: string, totalSales: number, totalUtility: number }>();
@@ -649,59 +707,110 @@ export const Sales = () => {
                     </div>
                 )}
 
+                {/* Barra de acciones en lote */}
+                {selectedSaleIds.size > 0 && (
+                    <div className="flex items-center gap-3 flex-wrap mb-4 p-3 rounded-2xl bg-ios-blue/5 border border-ios-blue/20 animate-fade-in">
+                        <span className="text-xs font-bold text-ios-blue">
+                            {selectedSaleIds.size} venta(s) seleccionada(s)
+                        </span>
+                        {!allFilteredSelected && filteredSaleIds.length > 0 && (
+                            <button
+                                onClick={toggleSelectAllFiltered}
+                                className="text-xs font-bold text-ios-blue underline underline-offset-2 hover:opacity-80 transition-opacity"
+                            >
+                                Seleccionar las {filteredSaleIds.length} del filtro
+                            </button>
+                        )}
+                        <div className="ml-auto flex items-center gap-2">
+                            <button
+                                onClick={clearSaleSelection}
+                                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 transition-all"
+                            >
+                                Limpiar selección
+                            </button>
+                            <button
+                                onClick={handleDeleteSelected}
+                                disabled={isDeletingSelected}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-ios-red text-white hover:bg-red-600 disabled:opacity-50 transition-all"
+                            >
+                                <Trash2 size={14} /> {isDeletingSelected ? 'Eliminando…' : `Eliminar (${selectedSaleIds.size})`}
+                            </button>
+                        </div>
+                    </div>
+                )}
+
                 <div className="overflow-x-auto rounded-xl border border-black/5 dark:border-white/5 bg-white/50 dark:bg-black/50">
                     <table className="w-full text-right text-sm">
                         <thead className="bg-black/5 dark:bg-white/5 border-b border-black/5 dark:border-white/5">
                             <tr>
-                                <th className="px-4 py-3 font-semibold text-left text-ios-subtext">Vendedor</th>
-                                <th className="px-4 py-3 font-semibold text-center text-ios-subtext">Fecha</th>
-                                <th className="px-4 py-3 font-semibold text-ios-subtext">Venta</th>
-                                <th className="px-4 py-3 font-semibold text-ios-subtext">Premio</th>
-                                <th className="px-4 py-3 font-semibold text-ios-subtext">Comision</th>
-                                <th className="px-4 py-3 font-semibold text-ios-text">Total</th>
-                                <th className="px-4 py-3 font-semibold text-ios-subtext">Part</th>
-                                <th className="px-4 py-3 font-semibold text-ios-blue">Total Vendedor</th>
-                                <th className="px-4 py-3 font-semibold text-ios-green">Total Banca</th>
-                                <th className="px-4 py-3"></th>
+                                <th className="px-2 py-3 w-8 text-left">
+                                    <input
+                                        type="checkbox"
+                                        className="w-4 h-4 accent-ios-blue cursor-pointer align-middle"
+                                        checked={allFilteredSelected}
+                                        ref={(el) => { if (el) el.indeterminate = !allFilteredSelected && someFilteredSelected; }}
+                                        onChange={toggleSelectAllFiltered}
+                                        title="Seleccionar todas las ventas del filtro"
+                                    />
+                                </th>
+                                <th className="px-2.5 py-3 font-semibold text-left text-ios-subtext">Vendedor</th>
+                                <th className="px-2.5 py-3 font-semibold text-center text-ios-subtext">Fecha</th>
+                                <th className="px-2.5 py-3 font-semibold text-ios-subtext">Venta</th>
+                                <th className="px-2.5 py-3 font-semibold text-ios-subtext">Premio</th>
+                                <th className="px-2.5 py-3 font-semibold text-ios-subtext">Comision</th>
+                                <th className="px-2.5 py-3 font-semibold text-ios-text">Total</th>
+                                <th className="px-2.5 py-3 font-semibold text-ios-subtext">Part</th>
+                                <th className="px-2.5 py-3 font-semibold text-ios-blue">Total Vendedor</th>
+                                <th className="px-2.5 py-3 font-semibold text-ios-green">Total Banca</th>
+                                <th className="px-2.5 py-3"></th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-black/5 dark:divide-white/5">
                             {isLoadingSales ? (
-                                <TableSkeleton cols={10} rows={8} />
+                                <TableSkeleton cols={11} rows={8} />
                             ) : weeklyReportData.rows.length === 0 ? (
                                 <tr>
-                                    <td colSpan={10} className="px-4 py-12 text-center text-ios-subtext">No hay ventas registradas en esta semana.</td>
+                                    <td colSpan={11} className="px-4 py-12 text-center text-ios-subtext">No hay ventas registradas en esta semana.</td>
                                 </tr>
                             ) : salesTotalCount === 0 ? (
                                 <tr>
-                                    <td colSpan={10} className="px-4 py-12 text-center text-ios-subtext">
+                                    <td colSpan={11} className="px-4 py-12 text-center text-ios-subtext">
                                         Sin ventas en {salesCurrencyFilter} para este período.
                                     </td>
                                 </tr>
                             ) : (
                                 paginatedSales.map((row) => (
                                     <tr key={row.id} className="hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors group">
-                                        <td className="px-4 py-3 text-left">
+                                        <td className="px-2 py-3 text-left">
+                                            <input
+                                                type="checkbox"
+                                                className="w-4 h-4 accent-ios-blue cursor-pointer align-middle"
+                                                checked={selectedSaleIds.has(String(row.id))}
+                                                onChange={() => toggleSaleSelected(String(row.id))}
+                                                title="Seleccionar venta"
+                                            />
+                                        </td>
+                                        <td className="px-2.5 py-3 text-left">
                                             <div className="font-bold text-ios-text">{row.sellerName}</div>
                                             <div className="text-xs text-ios-subtext font-medium mt-0.5">{row.productName} · <span className="font-bold opacity-80">{row.currencyName}</span></div>
                                         </td>
-                                        <td className="px-4 py-3 text-center text-xs font-bold text-ios-subtext">
+                                        <td className="px-2.5 py-3 text-center text-xs font-bold text-ios-subtext">
                                             {new Date(row.date + 'T12:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: 'short' })}
                                         </td>
-                                        <td className="px-4 py-3 font-medium text-ios-subtext">{getSymbol(row.currencyName)}{row.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                        <td className="px-4 py-3 font-medium text-red-500">-{getSymbol(row.currencyName)}{Math.abs(row.prize).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                        <td className="px-4 py-3 font-medium text-red-500">-{getSymbol(row.currencyName)}{Math.abs(row.commission).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                        <td className="px-4 py-3 font-bold text-ios-text">{row.total < 0 ? `-${getSymbol(row.currencyName)}${Math.abs(row.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `${getSymbol(row.currencyName)}${row.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</td>
-                                        <td className="px-4 py-3 font-medium text-orange-500">{row.participation < 0 ? `-${getSymbol(row.currencyName)}${Math.abs(row.participation).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `${getSymbol(row.currencyName)}${row.participation.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</td>
-                                        <td className="px-4 py-3 font-bold text-ios-blue">{getSymbol(row.currencyName)}{row.totalVendor.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                        <td className={`px-4 py-3 font-bold ${row.totalBank < 0 ? 'text-orange-400' : 'text-ios-green'}`}>
+                                        <td className="px-2.5 py-3 font-medium text-ios-subtext">{getSymbol(row.currencyName)}{row.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                        <td className="px-2.5 py-3 font-medium text-red-500">-{getSymbol(row.currencyName)}{Math.abs(row.prize).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                        <td className="px-2.5 py-3 font-medium text-red-500">-{getSymbol(row.currencyName)}{Math.abs(row.commission).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                        <td className="px-2.5 py-3 font-bold text-ios-text">{row.total < 0 ? `-${getSymbol(row.currencyName)}${Math.abs(row.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `${getSymbol(row.currencyName)}${row.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</td>
+                                        <td className="px-2.5 py-3 font-medium text-orange-500">{row.participation < 0 ? `-${getSymbol(row.currencyName)}${Math.abs(row.participation).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `${getSymbol(row.currencyName)}${row.participation.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</td>
+                                        <td className="px-2.5 py-3 font-bold text-ios-blue">{getSymbol(row.currencyName)}{row.totalVendor.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                        <td className={`px-2.5 py-3 font-bold ${row.totalBank < 0 ? 'text-orange-400' : 'text-ios-green'}`}>
                                             {row.totalBank < 0 ? `⚠️ -${getSymbol(row.currencyName)}${Math.abs(row.totalBank).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `${getSymbol(row.currencyName)}${row.totalBank.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                                         </td>
-                                        <td className="px-4 py-3 text-right">
+                                        <td className="px-2.5 py-3 text-right">
                                             <div className="flex items-center justify-end gap-1">
                                                 <button
                                                     onClick={() => handleStartEdit(row)}
-                                                    className="p-1.5 text-amber-400 hover:bg-amber-500/10 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
+                                                    className="p-1.5 text-amber-400 hover:bg-amber-500/10 rounded-lg transition-all"
                                                     title="Editar venta"
                                                 >
                                                     <Pencil size={15} />
@@ -728,12 +837,12 @@ export const Sales = () => {
                                                             isBancaDebt: row.totalBank < 0,
                                                         }
                                                     })}
-                                                    className="p-1.5 text-ios-blue hover:bg-ios-blue/10 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
+                                                    className="p-1.5 text-ios-blue hover:bg-ios-blue/10 rounded-lg transition-all"
                                                     title="Ver comprobante"
                                                 >
                                                     <Receipt size={15} />
                                                 </button>
-                                                <button onClick={() => handleDeleteSale(String(row.id))} className="p-1.5 text-ios-red hover:bg-ios-red/10 rounded-lg opacity-0 group-hover:opacity-100 transition-all" title="Eliminar venta">
+                                                <button onClick={() => handleDeleteSale(String(row.id))} className="p-1.5 text-ios-red hover:bg-ios-red/10 rounded-lg transition-all" title="Eliminar venta">
                                                     <Trash2 size={15} />
                                                 </button>
                                             </div>
@@ -747,15 +856,16 @@ export const Sales = () => {
                                 .filter(([currency]) => salesCurrencyFilter === 'ALL' || currency === salesCurrencyFilter)
                                 .map(([currency, totals]) => (
                                 <tr key={currency} className="bg-black/5 dark:bg-white/5 font-bold text-sm border-t-2 border-black/10 dark:border-white/10">
-                                    <td className="px-4 py-4 text-left text-ios-text">TOTALES {currency}</td>
-                                    <td className="px-4 py-4"></td>
-                                    <td className="px-4 py-4 text-ios-subtext">{getSymbol(currency)}{totals.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                    <td className="px-4 py-4 text-red-500">-{getSymbol(currency)}{Math.abs(totals.prize).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                    <td className="px-4 py-4 text-red-500">-{getSymbol(currency)}{Math.abs(totals.commission).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                    <td className="px-4 py-4 text-ios-text">{totals.total < 0 ? `-${getSymbol(currency)}${Math.abs(totals.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `${getSymbol(currency)}${totals.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</td>
-                                    <td className="px-4 py-4 text-orange-500">{totals.participation < 0 ? `-${getSymbol(currency)}${Math.abs(totals.participation).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `${getSymbol(currency)}${totals.participation.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</td>
-                                    <td className="px-4 py-4 text-ios-blue">{getSymbol(currency)}{totals.totalVendor.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                    <td className="px-4 py-4 text-ios-green">{getSymbol(currency)}{totals.totalBank.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                    <td className="px-2 py-4"></td>
+                                    <td className="px-2.5 py-4 text-left text-ios-text">TOTALES {currency}</td>
+                                    <td className="px-2.5 py-4"></td>
+                                    <td className="px-2.5 py-4 text-ios-subtext">{getSymbol(currency)}{totals.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                    <td className="px-2.5 py-4 text-red-500">-{getSymbol(currency)}{Math.abs(totals.prize).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                    <td className="px-2.5 py-4 text-red-500">-{getSymbol(currency)}{Math.abs(totals.commission).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                    <td className="px-2.5 py-4 text-ios-text">{totals.total < 0 ? `-${getSymbol(currency)}${Math.abs(totals.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `${getSymbol(currency)}${totals.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</td>
+                                    <td className="px-2.5 py-4 text-orange-500">{totals.participation < 0 ? `-${getSymbol(currency)}${Math.abs(totals.participation).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `${getSymbol(currency)}${totals.participation.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</td>
+                                    <td className="px-2.5 py-4 text-ios-blue">{getSymbol(currency)}{totals.totalVendor.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                    <td className="px-2.5 py-4 text-ios-green">{getSymbol(currency)}{totals.totalBank.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                                 </tr>
                             ))}
                         </tbody>

@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Eye, FileText, Pencil } from 'lucide-react';
+import { Eye, FileText, Pencil, Trash2 } from 'lucide-react';
 import { Payment } from '../../../services/apiService';
 import { useSmartTable } from '../../../hooks/useSmartTable';
 import { TablePaginator } from '../../../components/SmartTable/TablePaginator';
@@ -12,9 +12,10 @@ interface Props {
     onOpenProof: (src: string) => void;
     onSelectTicket: (payment: Payment) => void;
     onEditPayment?: (payment: Payment) => void;
+    onDeletePayment?: (payment: Payment) => void;
 }
 
-export const PaymentsTable = ({ filteredPayments, isLoading = false, onOpenProof, onSelectTicket, onEditPayment }: Props) => {
+export const PaymentsTable = ({ filteredPayments, isLoading = false, onOpenProof, onSelectTicket, onEditPayment, onDeletePayment }: Props) => {
 
     const [currencyFilter, setCurrencyFilter] = useState('ALL');
 
@@ -48,7 +49,7 @@ export const PaymentsTable = ({ filteredPayments, isLoading = false, onOpenProof
                     <CurrencyChips
                         currencies={availableCurrencies}
                         selected={currencyFilter}
-                        onSelect={setCurrencyFilter}
+                        onSelect={(c) => { setCurrencyFilter(c); setPage(1); }}
                     />
                     {totalCount > 0 && (
                         <span className="ml-auto text-xs font-semibold text-ios-subtext">
@@ -127,7 +128,7 @@ export const PaymentsTable = ({ filteredPayments, isLoading = false, onOpenProof
                                                 {onEditPayment && (
                                                     <button
                                                         onClick={() => onEditPayment(row)}
-                                                        className="text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 p-1.5 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                                                        className="text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 p-1.5 rounded-lg transition-all"
                                                         title="Editar Pago"
                                                     >
                                                         <Pencil size={17} />
@@ -144,11 +145,20 @@ export const PaymentsTable = ({ filteredPayments, isLoading = false, onOpenProof
                                                 )}
                                                 <button
                                                     onClick={() => onSelectTicket(row)}
-                                                    className="text-ios-subtext hover:text-ios-blue hover:bg-blue-500/10 p-1.5 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                                                    className="text-ios-subtext hover:text-ios-blue hover:bg-blue-500/10 p-1.5 rounded-lg transition-all"
                                                     title="Generar Ticket"
                                                 >
                                                     <FileText size={17} />
                                                 </button>
+                                                {onDeletePayment && (
+                                                    <button
+                                                        onClick={() => onDeletePayment(row)}
+                                                        className="text-ios-red/70 hover:text-ios-red hover:bg-red-500/10 p-1.5 rounded-lg transition-all"
+                                                        title="Eliminar Pago"
+                                                    >
+                                                        <Trash2 size={17} />
+                                                    </button>
+                                                )}
                                             </div>
                                         </td>
                                     </tr>

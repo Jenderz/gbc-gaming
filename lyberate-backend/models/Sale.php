@@ -95,6 +95,44 @@ class Sale {
         return $stmt->execute([$id]);
     }
 
+    /**
+     * Bulk delete of sales (transactional).
+     * If $ownerUserId is provided, only sales owned by that user are deleted
+     * (agency scoping). Returns the number of deleted rows.
+     */
+    public static function deleteBatch(array $ids, ?int $ownerUserId = null): int {
+        $db = getDB();
+        $clean = [];
+        foreach ($ids as $id) {
+            $intId = (int) $id;
+            if ($intId > 0) $clean[] = $intId;
+        }
+        $clean = array_values(array_unique($clean));
+        if (empty($clean)) return 0;
+
+        $count = 0;
+        $db->beginTransaction();
+        try {
+            foreach (array_chunk($clean, 500) as $chunk) {
+                $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+                $params = $chunk;
+                $sql = "DELETE FROM sales WHERE id IN ($placeholders)";
+                if ($ownerUserId !== null) {
+                    $sql .= " AND owner_user_id = ?";
+                    $params[] = $ownerUserId;
+                }
+                $stmt = $db->prepare($sql);
+                $stmt->execute($params);
+                $count += $stmt->rowCount();
+            }
+            $db->commit();
+        } catch (\Exception $e) {
+            $db->rollBack();
+            throw $e;
+        }
+        return $count;
+    }
+
     public static function update(int $id, array $data): bool {
         $db = getDB();
         $existing = self::findById($id);

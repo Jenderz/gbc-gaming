@@ -9,6 +9,10 @@ error_reporting(E_ALL);
 ini_set('display_errors', '0');
 ini_set('log_errors', '1');
 
+// Zona horaria oficial de la operación (Venezuela, UTC-4).
+// El frontend sincroniza su reloj contra GET /time.
+date_default_timezone_set('America/Caracas');
+
 // Load core
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/middleware/cors.php';
@@ -45,6 +49,11 @@ $id = $segments[2] ?? $segments[1] ?? null;
 
 try {
     switch ($resource) {
+        case 'time':
+            require_once __DIR__ . '/controllers/TimeController.php';
+            handleTime($method);
+            break;
+
         case 'auth':
             require_once __DIR__ . '/controllers/AuthController.php';
             handleAuth($method, $action ?? '');
@@ -69,9 +78,11 @@ try {
 
         case 'sales':
             require_once __DIR__ . '/controllers/SalesController.php';
-            // Check for /sales/batch
+            // /sales/batch (import) OR /sales/bulk-delete (lote)
             if ($action === 'batch') {
                 handleSales($method, 'batch');
+            } elseif ($action === 'bulk-delete') {
+                handleSales($method, 'bulk-delete');
             } else {
                 handleSales($method, null, $action); // $action is the ID for DELETE/PUT
             }
@@ -109,6 +120,10 @@ try {
             // Handle /agency/sales/batch  (/agency/{resource}/{id})
             if ($agencyId === 'batch') {
                 handleAgencyPortal($method, $agencyResource, 'batch', null);
+            }
+            // Handle /agency/sales/bulk-delete
+            elseif ($agencyId === 'bulk-delete') {
+                handleAgencyPortal($method, $agencyResource, 'bulk-delete', null);
             }
             // Handle /agency/payments/{id}/edit or /agency/payments/{id}/status
             elseif ($agencyAction !== null) {

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { X, Upload, CheckCircle2, ChevronDown } from 'lucide-react';
-import { addPayment, PaymentMethod, getWeeklyPeriods, getAvailableCurrencies } from '../../../services/apiService';
+import { addPayment, PaymentMethod, getWeeklyPeriods, getAvailableCurrencies, dateToWeekId } from '../../../services/apiService';
+import { todayISO } from '../../../utils/serverTime';
 
 const BANKS = ['Banesco', 'Provincial (BBVA)', 'Mercantil', 'BNC', 'Banplus', 'Bicentenario', 'Otro'];
 const METHODS: PaymentMethod[] = ['Transferencia', 'Zelle', 'Pago Móvil', 'Efectivo', 'Otro'];
@@ -21,7 +22,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, use
     const [bank, setBank] = useState('');
     const [method, setMethod] = useState<PaymentMethod>('Transferencia');
     const [reference, setReference] = useState('');
-    const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+    const [date, setDate] = useState(() => todayISO());
     const [proofImage, setProofImage] = useState<string | null>(null);
 
     const [proofName, setProofName] = useState('');
@@ -51,8 +52,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, use
     };
 
     const resetForm = () => {
-        setAmount(''); setCurrency('USD'); setBank(''); setMethod('Transferencia');
-        setReference(''); setDate(new Date().toISOString().split('T')[0]);
+        setAmount(''); setCurrency(currencies[0] || 'DOLAR'); setBank(''); setMethod('Transferencia');
+        setReference(''); setDate(todayISO());
         setProofImage(null); setProofName(''); setFormError('');
     };
 
@@ -65,8 +66,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, use
         e.preventDefault();
         if (!amount || !bank || !reference) { setFormError('Por favor completa todos los campos requeridos.'); return; }
         if (!user || !sellerId) return;
-        const weeklyPeriods = getWeeklyPeriods();
-        const currentWeek = weeklyPeriods[0];
+
+        // La semana se deriva de la fecha elegida (no siempre la semana actual)
+        const weekId = dateToWeekId(date || todayISO());
+        const weekLabel = getWeeklyPeriods([date]).find(p => p.id === weekId)?.label || 'Semana actual';
 
         try {
             await addPayment({
@@ -74,8 +77,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, use
                 vendorName: user.name,
                 agencyName: user.agencyName ?? '',
                 sellerId,
-                week: currentWeek?.label || 'Semana actual',
-                weekId: currentWeek?.id || 'week-0',
+                week: weekLabel,
+                weekId: weekId,
                 amount: Number(amount),
                 currency,
                 bank,

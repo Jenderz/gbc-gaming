@@ -11,6 +11,7 @@ import {
     Seller, WeeklyTicket
 } from '../services/apiService';
 import { roundFinance, getSymbol } from '../utils/finance';
+import { now } from '../utils/serverTime';
 import { WeekSelector } from '../components/WeekSelector';
 
 
@@ -618,7 +619,7 @@ export const WeeklyClosing = () => {
                                 </div>
                                 <div className="flex justify-between">
                                     <span className="text-xs text-gray-500 font-bold uppercase">Emisión:</span>
-                                    <span className="text-xs font-bold text-black">{new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                                    <span className="text-xs font-bold text-black">{now().toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                                 </div>
                             </div>
 

@@ -112,6 +112,15 @@ function handlePayments(string $method, ?string $action = null, ?string $id = nu
             }
             break;
 
+        case 'DELETE':
+            if (!$id) jsonError('ID requerido');
+            requireRole(['Admin', 'Supervisor']);
+            $payment = Payment::findById((int)$id);
+            if (!$payment) jsonError('Pago no encontrado', 404);
+            Payment::delete((int)$id);
+            jsonSuccess(null, 'Pago eliminado');
+            break;
+
         default:
             jsonError('Método no permitido', 405);
     }

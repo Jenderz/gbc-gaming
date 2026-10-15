@@ -7,6 +7,7 @@ import {
 import { useSmartTable } from '../hooks/useSmartTable';
 import { TablePaginator } from '../components/SmartTable/TablePaginator';
 import { TableSkeleton } from '../components/SmartTable/TableSkeleton';
+import { todayISO } from '../utils/serverTime';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -55,7 +56,7 @@ export const Posturas = () => {
     const [selectedPostura, setSelectedPostura] = useState<Postura | null>(null);
 
     // ── Form: Nueva Postura ─────────────────────────────────────────────
-    const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+    const [date, setDate] = useState(todayISO());
     const [concept, setConcept] = useState('');
     const [amount, setAmount] = useState<number | ''>('');
     const [currency, setCurrency] = useState('USD');
@@ -65,7 +66,7 @@ export const Posturas = () => {
     const [formError, setFormError] = useState('');
 
     // ── Form: Devolución/Cancelación ────────────────────────────────────
-    const [returnDate, setReturnDate] = useState(new Date().toISOString().split('T')[0]);
+    const [returnDate, setReturnDate] = useState(todayISO());
     const [returnNote, setReturnNote] = useState('');
 
     const refresh = async () => {
@@ -98,7 +99,7 @@ export const Posturas = () => {
 
     // ─── Handlers ────────────────────────────────────────────────────────
     const resetNew = () => {
-        setDate(new Date().toISOString().split('T')[0]);
+        setDate(todayISO());
         setConcept(''); setAmount(''); setCurrency('USD');
         setMethod('Efectivo'); setBank('N/A'); setResponsible(''); setFormError('');
     };
@@ -118,7 +119,7 @@ export const Posturas = () => {
 
     const openReturn = (p: Postura) => {
         setSelectedPostura(p);
-        setReturnDate(new Date().toISOString().split('T')[0]);
+        setReturnDate(todayISO());
         setReturnNote('');
         setModalMode('return');
     };

@@ -120,6 +120,19 @@ function handleAgencyPortal(string $method, string $resource, ?string $action = 
                         jsonSuccess(['imported' => $count], "$count ventas importadas");
                         break;
                     }
+                    if ($action === 'bulk-delete') {
+                        $data = getJsonBody();
+                        if (empty($data['ids']) || !is_array($data['ids'])) {
+                            jsonError('Se requiere un array de IDs en "ids"');
+                        }
+                        if (count($data['ids']) > 10000) {
+                            jsonError('Demasiados IDs en una sola operación (máximo 10000)');
+                        }
+                        // Solo se eliminan ventas propias de la agencia
+                        $deleted = Sale::deleteBatch($data['ids'], $ownerId);
+                        jsonSuccess(['deleted' => $deleted], "$deleted ventas eliminadas");
+                        break;
+                    }
                     $data = getJsonBody();
                     $err = validateRequired($data, ['seller_id', 'product_name', 'currency_name', 'amount', 'sale_date', 'week_id']);
                     if ($err) jsonError($err);
@@ -213,6 +226,16 @@ function handleAgencyPortal(string $method, string $resource, ?string $action = 
                         Payment::updateStatus((int)$id, $data['status'], $data['admin_note'] ?? null);
                         jsonSuccess(Payment::findById((int)$id), 'Estado actualizado');
                     }
+                    break;
+
+                case 'DELETE':
+                    if (!$id) jsonError('ID requerido');
+                    $existing = Payment::findById((int)$id);
+                    if (!$existing || (int)($existing['owner_user_id'] ?? 0) !== $ownerId) {
+                        jsonError('Pago no encontrado', 404);
+                    }
+                    Payment::delete((int)$id);
+                    jsonSuccess(null, 'Pago eliminado');
                     break;
 
                 default:

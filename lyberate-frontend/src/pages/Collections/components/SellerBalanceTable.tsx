@@ -45,16 +45,17 @@ export const SellerBalanceTable = ({
     const [currencyFilter, setCurrencyFilter] = useState('ALL');
     const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
 
-    const rangeLabel = filterPreset === 'today' ? 'Hoy' :
-        filterPreset === 'week' ? 'Esta semana' :
-            filterPreset === 'month' ? 'Este mes' :
+    // Los saldos son acumulados (histórico hasta el fin del rango seleccionado),
+    // para que "Al día" refleje la deuda real y no solo la actividad de la semana.
+    const cutoffLabel = filterPreset === 'today' ? 'Saldos acumulados hasta hoy' :
+        filterPreset === 'week' && filterRange ? `Saldos acumulados hasta el dom ${filterRange.end.toLocaleDateString('es-ES', { day: '2-digit', month: 'short' })}` :
+            filterPreset === 'month' && filterRange ? `Saldos acumulados hasta el ${filterRange.end.toLocaleDateString('es-ES', { day: '2-digit', month: 'short' })}` :
                 filterPreset === 'range' && rangeStart && rangeEnd
-                    ? `${rangeStart} al ${rangeEnd}`
-                    : 'Todos los registros';
+                    ? `Saldos acumulados hasta ${rangeEnd}`
+                    : 'Saldos acumulados (histórico completo)';
 
-    // ─── Cálculo principal ────────────────────────────────────────────────────
+    // ─── Cálculo principal (acumulado hasta el fin del rango) ─────────────────
     const rows = useMemo(() => {
-        const start = filterRange?.start;
         const end = filterRange?.end;
 
         const balanceMap = new Map<string, {
@@ -68,32 +69,36 @@ export const SellerBalanceTable = ({
             balance: number;
         }>();
 
-        sales.filter(s => {
-            const d = new Date(s.date + 'T12:00:00');
-            if (!start || !end) return true;
-            return d >= start && d <= end;
-        }).forEach(s => {
-            const key = `${s.sellerId}|||${s.currencyName}`;
+        const ensureRow = (sellerId: string, sellerName: string, currency: string) => {
+            const key = `${sellerId}|||${currency}`;
             if (!balanceMap.has(key)) {
                 balanceMap.set(key, {
-                    sellerName: s.sellerName,
-                    sellerId: String(s.sellerId),
-                    currency: s.currencyName,
+                    sellerName,
+                    sellerId,
+                    currency,
                     totalBank: 0, totalPaid: 0,
                     totalCredits: 0, totalPayouts: 0, balance: 0,
                 });
             }
-            balanceMap.get(key)!.totalBank += s.totalBank;
+            return balanceMap.get(key)!;
+        };
+
+        // Todas las ventas hasta la fecha de corte acumulan la deuda
+        sales.forEach(s => {
+            if (end) {
+                const d = new Date(s.date + 'T12:00:00');
+                if (d > end) return;
+            }
+            ensureRow(String(s.sellerId), s.sellerName, s.currencyName).totalBank += s.totalBank;
         });
 
-        payments.filter(p => {
-            const d = new Date(p.date + 'T12:00:00');
-            if (!start || !end) return p.status === 'approved';
-            return d >= start && d <= end && p.status === 'approved';
-        }).forEach(p => {
-            const key = `${p.sellerId}|||${p.currency}`;
-            if (!balanceMap.has(key)) return;
-            const val = balanceMap.get(key)!;
+        // Todos los pagos aprobados hasta la fecha de corte reducen la deuda
+        payments.filter(p => p.status === 'approved').forEach(p => {
+            if (end) {
+                const d = new Date(p.date + 'T12:00:00');
+                if (d > end) return;
+            }
+            const val = ensureRow(String(p.sellerId), p.vendorName || '', p.currency);
             if (p.type === 'credit') val.totalCredits += p.amount;
             else if (p.type === 'payout') val.totalPayouts += p.amount;
             else val.totalPaid += p.amount;
@@ -192,7 +197,7 @@ export const SellerBalanceTable = ({
                 <div className="flex items-center justify-between mb-3">
                     <div>
                         <h3 className="font-bold text-sm tracking-wide">🧾 Balance por Vendedor</h3>
-                        <p className="text-xs text-ios-subtext mt-0.5">{rangeLabel}</p>
+                        <p className="text-xs text-ios-subtext mt-0.5">{cutoffLabel}</p>
                     </div>
                     <span className="text-xs font-semibold text-ios-subtext">{totalCount} registro(s)</span>
                 </div>
@@ -234,7 +239,7 @@ export const SellerBalanceTable = ({
             {totalsByCurrency.length > 0 && (
                 <div className="px-5 py-4 border-b border-black/5 dark:border-white/5 bg-black/[0.015] dark:bg-white/[0.015]">
                     <p className="text-[10px] font-bold uppercase tracking-widest text-ios-subtext mb-3">
-                        📊 Resumen del período — {rangeLabel}
+                        📊 Resumen — {cutoffLabel}
                     </p>
                     <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${Math.min(totalsByCurrency.length, 3)}, 1fr)` }}>
                         {totalsByCurrency.map(t => (
